@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -108,7 +108,7 @@ public class GenerateDefaultTranslationsMojo extends AbstractI18nMojo {
     }
 
     protected String generateDefaultTranslations(Path defaultTranslationsPath) {
-        XmlToTranslationsConverter xmlConverter = new XmlToTranslationsConverter();
+        XmlToTranslationsConverter xmlConverter = new XmlToTranslationsConverter(getLog());
         Translations generatedTranslations = xmlConverter.convert(bundleInfo);
 
         JsonToTranslationsConverter jsonConverter = new JsonToTranslationsConverter();

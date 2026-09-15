@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -22,6 +22,9 @@ import org.eclipse.jdt.annotation.Nullable;
  */
 @NonNullByDefault
 public abstract class AbstractEvent implements Event {
+    public static final String ACTOR_SEPARATOR = "$";
+    public static final String DELEGATION_SEPARATOR = "=>";
+    public static final String DELEGATION_ESCAPE = "__";
 
     private final String topic;
 
@@ -61,9 +64,9 @@ public abstract class AbstractEvent implements Event {
     public int hashCode() {
         final int prime = 31;
         int result = 1;
-        result = prime * result + ((payload == null) ? 0 : payload.hashCode());
-        result = prime * result + ((source == null) ? 0 : source.hashCode());
-        result = prime * result + ((topic == null) ? 0 : topic.hashCode());
+        result = prime * result + payload.hashCode();
+        result = prime * result + (source instanceof String local ? local.hashCode() : 0);
+        result = prime * result + topic.hashCode();
         return result;
     }
 
@@ -79,27 +82,76 @@ public abstract class AbstractEvent implements Event {
             return false;
         }
         AbstractEvent other = (AbstractEvent) obj;
-        if (payload == null) {
-            if (other.payload != null) {
-                return false;
-            }
-        } else if (!payload.equals(other.payload)) {
+        if (!payload.equals(other.payload)) {
             return false;
         }
-        if (source == null) {
+        String localSource = source;
+        if (localSource == null) {
             if (other.source != null) {
                 return false;
             }
-        } else if (!source.equals(other.source)) {
+        } else if (!localSource.equals(other.source)) {
             return false;
         }
-        if (topic == null) {
-            if (other.topic != null) {
-                return false;
-            }
-        } else if (!topic.equals(other.topic)) {
+        if (!topic.equals(other.topic)) {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Utility method to build a source string from a bundle and an optional actor.
+     *
+     * Bundle names may not contain the actor separator.
+     *
+     * The actor, if present, will be replaced with `__` to disallow the delegation separator.
+     * Consequently, `__` will be doubled as an escape sequence.
+     *
+     * @param bundle the bundle (such as org.openhab.core.thing or org.openhab.binding.matter)
+     * @param actor the actor
+     * @return the final source string
+     */
+    public static String buildSource(String bundle, @Nullable String actor) {
+        if (bundle.contains(ACTOR_SEPARATOR)) {
+            throw new IllegalArgumentException("Bundle must not contain the actor separator '" + ACTOR_SEPARATOR + "'");
+        }
+        if (bundle.contains(DELEGATION_SEPARATOR)) {
+            throw new IllegalArgumentException(
+                    "Bundle must not contain the delegation separator '" + DELEGATION_SEPARATOR + "'");
+        }
+
+        if (actor == null || actor.isEmpty()) {
+            return bundle;
+        }
+
+        actor = actor.replace(DELEGATION_ESCAPE, DELEGATION_ESCAPE + DELEGATION_ESCAPE);
+        actor = actor.replace(DELEGATION_SEPARATOR, DELEGATION_ESCAPE);
+        return bundle + ACTOR_SEPARATOR + actor;
+    }
+
+    /**
+     * Utility method to build a delegated source string from an original source and a bundle
+     *
+     * @param originalSource the original source (may be null)
+     * @param bundle the bundle (such as org.openhab.core.thing or org.openhab.binding.matter)
+     * @return the final source string
+     */
+    public static String buildDelegatedSource(@Nullable String originalSource, String bundle) {
+        if (originalSource == null || originalSource.isEmpty()) {
+            return bundle;
+        }
+        return originalSource + DELEGATION_SEPARATOR + bundle;
+    }
+
+    /**
+     * Utility method to build a delegated source string from an original source, a bundle and an optional actor.
+     *
+     * @param originalSource the original source (may be null)
+     * @param bundle the bundle (such as org.openhab.core.thing or org.openhab.binding.matter)
+     * @param actor the actor
+     * @return the final source string
+     */
+    public static String buildDelegatedSource(@Nullable String originalSource, String bundle, @Nullable String actor) {
+        return buildDelegatedSource(originalSource, buildSource(bundle, actor));
     }
 }

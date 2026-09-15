@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -11,6 +11,8 @@
  * SPDX-License-Identifier: EPL-2.0
  */
 package org.openhab.core.library;
+
+import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -41,7 +43,7 @@ import org.osgi.service.component.annotations.Reference;
  * @author Kai Kreuzer - Initial contribution
  * @author Alexander Kostadinov - Initial contribution
  */
-@Component(immediate = true)
+@Component(immediate = true, service = { CoreItemFactory.class, ItemFactory.class })
 @NonNullByDefault
 public class CoreItemFactory implements ItemFactory {
 
@@ -57,6 +59,11 @@ public class CoreItemFactory implements ItemFactory {
     public static final String ROLLERSHUTTER = "Rollershutter";
     public static final String STRING = "String";
     public static final String SWITCH = "Switch";
+
+    public static final Set<String> VALID_ITEM_TYPES = Set.of( //
+            CALL, COLOR, CONTACT, DATETIME, DIMMER, IMAGE, LOCATION, NUMBER, PLAYER, ROLLERSHUTTER, STRING, SWITCH //
+    );
+
     private final UnitProvider unitProvider;
 
     @Activate
@@ -90,7 +97,6 @@ public class CoreItemFactory implements ItemFactory {
 
     @Override
     public String[] getSupportedItemTypes() {
-        return new String[] { SWITCH, ROLLERSHUTTER, CONTACT, STRING, NUMBER, DIMMER, DATETIME, COLOR, IMAGE, PLAYER,
-                LOCATION, CALL };
+        return VALID_ITEM_TYPES.toArray(new String[0]);
     }
 }

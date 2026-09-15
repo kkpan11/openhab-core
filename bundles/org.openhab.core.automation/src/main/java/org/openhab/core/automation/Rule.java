@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,6 +13,7 @@
 package org.openhab.core.automation;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -40,6 +41,7 @@ import org.openhab.core.config.core.Configuration;
  * They can help the user to classify or label the Rules, and to filter and search them.
  *
  * @author Kai Kreuzer - Initial contribution
+ * @author Ravi Nadahar - Added TemplateState
  */
 @NonNullByDefault
 public interface Rule extends Identifiable<String> {
@@ -57,14 +59,24 @@ public interface Rule extends Identifiable<String> {
      * This method is used to obtain the {@link RuleTemplate} identifier of the template the {@link Rule} was created
      * from. It will be used by the {@link RuleRegistry} to resolve the {@link Rule}: to validate the {@link Rule}'s
      * configuration, as well as to create and configure the {@link Rule}'s modules. If a {@link Rule} has not been
-     * created from a template, or has been successfully resolved by the {@link RuleRegistry}, this method will return
-     * {@code null}.
+     * created from a template, this method will return {@code null}.
      *
      * @return the identifier of the {@link Rule}'s {@link RuleTemplate}, or {@code null} if the {@link Rule} has not
-     *         been created from a template, or has been successfully resolved by the {@link RuleRegistry}.
+     *         been created from a template.
      */
     @Nullable
     String getTemplateUID();
+
+    /**
+     * This method is used to track the template processing state by the {@link RuleRegistry}. The default
+     * implementation doesn't support templates and must be overridden if the {@link Rule} implementation
+     * supports templates.
+     *
+     * @return the current template processing state.
+     */
+    default TemplateState getTemplateState() {
+        return TemplateState.NO_TEMPLATE;
+    }
 
     /**
      * This method is used to obtain the {@link Rule}'s human-readable name.
@@ -153,5 +165,72 @@ public interface Rule extends Identifiable<String> {
             }
         }
         return null;
+    }
+
+    /**
+     * The "magic key" used for the source code string itself when storing {@link Rule}'s source code in its
+     * {@link Configuration}. A {@link Rule} can only have a source code if it is created by a script. The payload
+     * is a string containing the whole source code.
+     */
+    static String SOURCE = "source";
+
+    /**
+     * The "magic key" used for the source code type when storing {@link Rule}'s source code in its
+     * {@link Configuration}. A {@link Rule} can only have a source code if it is created by a script. The payload
+     * is a string containing OH's "quasi MIME-type" for the scripting language of the source code.
+     */
+    static String SOURCE_TYPE = "sourceType";
+
+    /**
+     * This enum represent the different states a rule can have in respect to rule templates.
+     */
+    public enum TemplateState {
+
+        /** This {@link Rule} isn't associated with a template */
+        NO_TEMPLATE,
+
+        /** This {@link Rule} is associated with a template and it has yet to be instantiated */
+        PENDING,
+
+        /** This {@link Rule} is associated with a template that wasn't found */
+        TEMPLATE_MISSING,
+
+        /** This {@link Rule} is associated with a template and has been instantiated */
+        INSTANTIATED;
+
+        @Override
+        public String toString() {
+            switch (this) {
+                case INSTANTIATED:
+                    return "instantiated";
+                case PENDING:
+                    return "pending";
+                case TEMPLATE_MISSING:
+                    return "template-missing";
+                case NO_TEMPLATE:
+                default:
+                    return "no-template";
+            }
+        }
+
+        /**
+         * Returns the {@link TemplateState} that best represents the specified string. If no match is found,
+         * {@link TemplateState#NO_TEMPLATE} is returned.
+         *
+         * @param templateState the string to convert.
+         * @return The resulting {@link TemplateState}.
+         */
+        public static TemplateState typeOf(@Nullable String templateState) {
+            if (templateState == null) {
+                return NO_TEMPLATE;
+            }
+            String s = templateState.trim().toLowerCase(Locale.ROOT);
+            return switch (s) {
+                case "instantiated" -> INSTANTIATED;
+                case "pending" -> PENDING;
+                case "template-missing" -> TEMPLATE_MISSING;
+                default -> NO_TEMPLATE;
+            };
+        }
     }
 }

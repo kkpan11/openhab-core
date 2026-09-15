@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -53,9 +53,9 @@ public class ImageItem extends GenericItem {
     }
 
     @Override
-    public void setState(State state) {
+    public void setState(State state, @Nullable String source) {
         if (isAcceptedState(ACCEPTED_DATA_TYPES, state)) {
-            applyState(state);
+            applyState(state, source);
         } else {
             logSetTypeError(state);
         }

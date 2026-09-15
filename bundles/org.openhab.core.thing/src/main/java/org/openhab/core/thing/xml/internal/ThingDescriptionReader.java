@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -48,6 +48,7 @@ import com.thoughtworks.xstream.XStream;
  * @author Thomas Höfer - Added thing and thing type properties
  * @author Chris Jackson - Added parameter groups and channel properties
  * @author Moritz Kammerer - Added triggers
+ * @author Andrew Fiddian-Green - Added equipment property
  */
 @NonNullByDefault
 public class ThingDescriptionReader extends XmlDocumentReader<List<?>> {
@@ -120,5 +121,6 @@ public class ThingDescriptionReader extends XmlDocumentReader<List<?>> {
         xstream.alias("representation-property", NodeValue.class);
         xstream.alias("command-options", NodeList.class);
         xstream.alias("autoUpdatePolicy", NodeValue.class);
+        xstream.alias("semantic-equipment-tag", NodeValue.class);
     }
 }

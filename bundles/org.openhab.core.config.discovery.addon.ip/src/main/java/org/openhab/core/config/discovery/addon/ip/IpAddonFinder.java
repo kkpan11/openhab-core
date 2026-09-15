@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,7 +21,10 @@ import java.net.DatagramSocket;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
 import java.net.SocketAddress;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.StandardProtocolFamily;
 import java.net.StandardSocketOptions;
@@ -34,6 +37,7 @@ import java.text.ParseException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.IllegalFormatException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -75,7 +79,7 @@ import org.slf4j.LoggerFactory;
 /**
  * This is a {@link IpAddonFinder} for finding suggested add-ons by sending IP packets to the
  * network and collecting responses.
- * 
+ *
  * This finder is intended to detect devices on the network which do not announce via UPnP
  * or mDNS. Some devices respond to queries to defined multicast addresses and ports and thus
  * can be detected by sending a single frame on the IP network.
@@ -139,6 +143,11 @@ import org.slf4j.LoggerFactory;
  * <td>timeout to wait for a answers</td>
  * <td></td>
  * </tr>
+ * <tr>
+ * <td>{@code fmtMac}</td>
+ * <td>format specifier string for mac address</td>
+ * <td>e.g. '%02X', '%02X:', '%02x-'</td>
+ * </tr>
  * </table>
  * <p>
  * <table border="1">
@@ -154,6 +163,11 @@ import org.slf4j.LoggerFactory;
  * <td>{@code $srcPort}</td>
  * <td>source port</td>
  * </tr>
+ * <tr>
+ * <td>{@code $srcMac}</td>
+ * <td>source mac address</td>
+ * </tr>
+ * <tr>
  * <td>{@code $uuid}</td>
  * <td>String returned by {@code java.util.UUID.randomUUID()}</td>
  * </tr>
@@ -201,6 +215,8 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
     private static final String PARAMETER_REQUEST_PLAIN = "requestPlain";
     private static final String PARAMETER_SRC_IP = "srcIp";
     private static final String PARAMETER_SRC_PORT = "srcPort";
+    private static final String PARAMETER_SRC_MAC = "srcMac";
+    private static final String PARAMETER_MAC_FORMAT = "fmtMac";
     private static final String PARAMETER_TIMEOUT_MS = "timeoutMs";
     private static final String REPLACEMENT_UUID = "uuid";
 
@@ -346,16 +362,21 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
                         continue;
                     }
                 }
+                String macFormat = parameters.getOrDefault(PARAMETER_MAC_FORMAT, "%02X:");
+                if (!macFormatValid(macFormat)) {
+                    logger.warn("{}: discovery-parameter '{}' invalid format specifier", candidate.getUID(), macFormat);
+                    continue;
+                }
 
                 // handle known types
                 try {
                     switch (Objects.toString(type)) {
                         case TYPE_IP_BROADCAST:
-                            scanBroadcast(candidate, request, requestPlain, response, timeoutMs, destPort);
+                            scanBroadcast(candidate, request, requestPlain, response, timeoutMs, destPort, macFormat);
                             break;
                         case TYPE_IP_MULTICAST:
                             scanMulticast(candidate, request, requestPlain, response, timeoutMs, listenPort, destIp,
-                                    destPort);
+                                    destPort, macFormat);
                             break;
                         default:
                             logger.warn("{}: discovery-parameter type \"{}\" is unknown", candidate.getUID(), type);
@@ -369,7 +390,7 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
     }
 
     private void scanBroadcast(AddonInfo candidate, String request, String requestPlain, String response, int timeoutMs,
-            int destPort) throws ParseException {
+            int destPort, String macFormat) throws ParseException {
         if (request.isEmpty() && requestPlain.isEmpty()) {
             logger.warn("{}: match-property request and requestPlain \"{}\" is unknown", candidate.getUID(),
                     TYPE_IP_BROADCAST);
@@ -385,13 +406,29 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
             return;
         }
         String broadcastAddress = networkAddressService.getConfiguredBroadcastAddress();
+        if (broadcastAddress == null || broadcastAddress.isBlank()) {
+            logger.debug("Unable to resolve broadcast address");
+            return;
+        }
+        InetAddress bAddr;
+        try {
+            bAddr = InetAddress.getByName(broadcastAddress);
+        } catch (UnknownHostException e) {
+            logger.debug("Unable to resolve broadcast address: {}", e.getMessage());
+            return;
+        }
+        InterfaceAddress sourceAddress = NetUtil.getSameSubnetInterfaceAddress(bAddr);
+        if (sourceAddress == null) {
+            logger.debug("Unable to find a suitable interface address for broadcast address \"{}\"", broadcastAddress);
+            return;
+        }
         logger.debug("Starting broadcast scan with address {}", broadcastAddress);
 
-        try (DatagramSocket socket = new DatagramSocket()) {
+        try (DatagramSocket socket = new DatagramSocket(0, sourceAddress.getAddress())) {
             socket.setBroadcast(true);
             socket.setSoTimeout(timeoutMs);
             byte[] sendBuffer = requestPlain.isEmpty() ? buildRequestArray(socket.getLocalSocketAddress(), request)
-                    : buildRequestArrayPlain(socket.getLocalSocketAddress(), requestPlain);
+                    : buildRequestArrayPlain(socket.getLocalSocketAddress(), requestPlain, macFormat);
             DatagramPacket sendPacket = new DatagramPacket(sendBuffer, sendBuffer.length,
                     InetAddress.getByName(broadcastAddress), destPort);
             socket.send(sendPacket);
@@ -431,7 +468,7 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
     }
 
     private void scanMulticast(AddonInfo candidate, String request, String requestPlain, String response, int timeoutMs,
-            int listenPort, @Nullable InetAddress destIp, int destPort) throws ParseException {
+            int listenPort, @Nullable InetAddress destIp, int destPort, String macFormat) throws ParseException {
         List<String> ipAddresses = NetUtil.getAllInterfaceAddresses().stream()
                 .filter(a -> a.getAddress() instanceof Inet4Address).map(a -> a.getAddress().getHostAddress()).toList();
 
@@ -443,7 +480,7 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
                     Selector selector = Selector.open()) {
                 byte[] requestArray = "".equals(requestPlain)
                         ? buildRequestArray(channel.getLocalAddress(), Objects.toString(request))
-                        : buildRequestArrayPlain(channel.getLocalAddress(), Objects.toString(requestPlain));
+                        : buildRequestArrayPlain(channel.getLocalAddress(), Objects.toString(requestPlain), macFormat);
                 if (logger.isTraceEnabled()) {
                     InetSocketAddress sock = (InetSocketAddress) channel.getLocalAddress();
                     String id = candidate.getUID();
@@ -489,7 +526,7 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
     }
 
     // build from plaintext string
-    private byte[] buildRequestArrayPlain(SocketAddress address, String request)
+    private byte[] buildRequestArrayPlain(SocketAddress address, String request, String macFormat)
             throws java.io.IOException, ParseException {
         InetSocketAddress sock = (InetSocketAddress) address;
 
@@ -501,6 +538,9 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
         }
         while ((p = req.indexOf("$" + PARAMETER_SRC_PORT)) != -1) {
             req.replace(p, p + PARAMETER_SRC_PORT.length() + 1, "" + sock.getPort());
+        }
+        while ((p = req.indexOf("$" + PARAMETER_SRC_MAC)) != -1) {
+            req.replace(p, p + PARAMETER_SRC_MAC.length() + 1, macFormat(macFormat, macBytesFrom(sock)));
         }
         while ((p = req.indexOf("$" + REPLACEMENT_UUID)) != -1) {
             req.replace(p, p + REPLACEMENT_UUID.length() + 1, UUID.randomUUID().toString());
@@ -530,6 +570,10 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
                         int dPort = sock.getPort();
                         requestFrame.write((byte) ((dPort >> 8) & 0xff));
                         requestFrame.write((byte) (dPort & 0xff));
+                        break;
+                    case "$" + PARAMETER_SRC_MAC:
+                        byte[] mac = macBytesFrom(sock);
+                        requestFrame.write(mac);
                         break;
                     case "$" + REPLACEMENT_UUID:
                         String uuid = UUID.randomUUID().toString();
@@ -564,6 +608,77 @@ public class IpAddonFinder extends BaseAddonFinder implements NetworkAddressChan
             if (addon != null && addon.isInstalled()) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    /**
+     * Get mac address bytes associated with the given Internet socket address
+     *
+     * @param inetSocketAddress the Internet address
+     * @return the mac address as an array of bytes
+     * @throws SocketException if address is not on this PC, or no mac address is associated
+     */
+    private byte[] macBytesFrom(InetSocketAddress inetSocketAddress) throws SocketException {
+        NetworkInterface networkInterface = NetworkInterface.getByInetAddress(inetSocketAddress.getAddress());
+        if (networkInterface == null) {
+            throw new SocketException("No network interface");
+        }
+        return networkInterface.getHardwareAddress();
+    }
+
+    /**
+     * Use the given format specifier to format an array of mac address bytes
+     *
+     * @param format a standard format specifier; optionally ends with a delimiter e.g. {@code %02x:} or {@code %02X}
+     * @param bytes the mac address as an array of bytes
+     * @return e.g. '{@code 01:02:03:04:A5:B6:C7:D8}' or '{@code 01-02-03-04-a5-b6-c7-d8}' or '{@code 01020304A5B6C7D8}'
+     */
+    private String macFormat(String format, byte[] bytes) {
+        StringBuilder result = new StringBuilder();
+        for (byte byt : bytes) {
+            result.append(String.format(format, byt));
+        }
+        boolean isDelimited = !Character.isLetterOrDigit(format.charAt(format.length() - 1));
+        return (isDelimited ? result.substring(0, result.length() - 1) : result).toString();
+    }
+
+    /**
+     * Check if the given mac format specifier is valid. A valid specifier comprises two parts -- namely
+     * 1) a numeric format specifier acceptable to the {@code String.format()} method, plus 2) a single
+     * [optional] delimiter (i.e. a non alphanumeric) character. Examples are as follows:
+     * <p>
+     * <li>{@code %02X} produces {@code 01020304A5B6C7D8}</li>
+     * <li>{@code %02x:} produces {@code 01:02:03:04:a5:b6:c7:d8} (lower case hex)</li>
+     * <li>{@code %02X-} produces {@code 01-02-03-04-A5-B6-C7-D8} (upper case hex)</li>
+     * <li>{@code %02X,} produces {@code 01,02,03,04,A5,B6,C7,D8}</li>
+     * <p>
+     *
+     * @return true if the format specifier is valid
+     */
+    private boolean macFormatValid(String format) {
+        // use String.format() to check first part validity
+        try {
+            String.format(format, (byte) 123);
+        } catch (IllegalFormatException e) {
+            return false;
+        }
+        // get position of numeric format letter e.g. the 'X' in '%02X-'
+        int last = format.length() - 1;
+        int index = 0;
+        while (index <= last) {
+            if (Character.isLetter(format.charAt(index))) {
+                break;
+            }
+            index++;
+        }
+        // check for zero or one character(s) after numeric format letter
+        switch (last - index) {
+            case 0:
+                return true;
+            case 1:
+                // check this character is non alphanumeric i.e. a delimiter
+                return !Character.isLetterOrDigit(format.charAt(last));
         }
         return false;
     }

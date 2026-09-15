@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,6 +18,8 @@ import org.openhab.core.items.dto.ItemDTO;
 import org.openhab.core.types.CommandDescription;
 import org.openhab.core.types.StateDescription;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * This is an enriched data transfer object that is used to serialize items with dynamic data like the state, the state
  * description and the link.
@@ -25,20 +27,29 @@ import org.openhab.core.types.StateDescription;
  * @author Dennis Nobel - Initial contribution
  * @author Kai Kreuzer - Added metadata
  * @author Mark Herwege - Added default unit symbol
+ * @author Mark Herwege - Added parent groups
  */
+@Schema(name = "EnrichedItem")
 public class EnrichedItemDTO extends ItemDTO {
 
     public String link;
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     public String state;
     public String transformedState;
     public StateDescription stateDescription;
-    public String unitSymbol;
     public CommandDescription commandDescription;
+    public String lastState;
+    public Long lastStateUpdate;
+    public Long lastStateChange;
+    public String unitSymbol;
     public Map<String, Object> metadata;
+    public EnrichedItemDTO[] parents = null;
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     public Boolean editable;
 
-    public EnrichedItemDTO(ItemDTO itemDTO, String link, String state, String transformedState,
-            StateDescription stateDescription, CommandDescription commandDescription, String unitSymbol) {
+    public EnrichedItemDTO(ItemDTO itemDTO, String link, String state, String lastState, Long lastStateUpdate,
+            Long lastStateChange, String transformedState, StateDescription stateDescription,
+            CommandDescription commandDescription, String unitSymbol) {
         this.type = itemDTO.type;
         this.name = itemDTO.name;
         this.label = itemDTO.label;
@@ -50,6 +61,9 @@ public class EnrichedItemDTO extends ItemDTO {
         this.transformedState = transformedState;
         this.stateDescription = stateDescription;
         this.commandDescription = commandDescription;
+        this.lastState = lastState;
+        this.lastStateUpdate = lastStateUpdate;
+        this.lastStateChange = lastStateChange;
         this.unitSymbol = unitSymbol;
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,13 +13,11 @@
 package org.openhab.core.common.osgi;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.io.File;
 import java.net.URL;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.List;
 
@@ -37,7 +35,7 @@ public class ResourceBundleClassLoaderTest {
     private @TempDir @NonNullByDefault({}) Path tempDir;
 
     static URL createTmpTestPropertiesFile(Path root, String relativeFile) throws Exception {
-        Path filePath = Paths.get(relativeFile);
+        Path filePath = Path.of(relativeFile);
         Path dirPath = filePath.getParent();
 
         new File(root.toFile(), dirPath.toString()).mkdirs();

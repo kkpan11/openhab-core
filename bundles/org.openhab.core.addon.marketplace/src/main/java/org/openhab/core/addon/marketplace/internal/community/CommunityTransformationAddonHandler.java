@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,11 +13,12 @@
 package org.openhab.core.addon.marketplace.internal.community;
 
 import static org.openhab.core.addon.marketplace.MarketplaceConstants.*;
-import static org.openhab.core.addon.marketplace.internal.community.CommunityMarketplaceAddonService.JSON_CONTENT_PROPERTY;
-import static org.openhab.core.addon.marketplace.internal.community.CommunityMarketplaceAddonService.YAML_CONTENT_PROPERTY;
+import static org.openhab.core.addon.marketplace.internal.community.CommunityMarketplaceAddonService.*;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -67,7 +68,8 @@ public class CommunityTransformationAddonHandler implements MarketplaceAddonHand
 
     @Activate
     public CommunityTransformationAddonHandler(final @Reference StorageService storageService) {
-        this.storage = storageService.getStorage("org.openhab.marketplace.transformation");
+        this.storage = storageService.getStorage("org.openhab.marketplace.transformation",
+                this.getClass().getClassLoader());
 
         this.yamlMapper = new ObjectMapper(new YAMLFactory());
         yamlMapper.findAndRegisterModules();
@@ -107,8 +109,9 @@ public class CommunityTransformationAddonHandler implements MarketplaceAddonHand
             } else if (jsonContent != null) {
                 persistedTransformation = addTransformationFromJSON(addon.getUid(), jsonContent);
             } else {
-                throw new IllegalArgumentException(
-                        "Couldn't find the transformation in the add-on entry. The starting code fence may not be marked as ```yaml");
+                logger.error("Transformation {} has neither download URL nor embedded content", addon.getUid());
+                throw new MarketplaceHandlerException("Transformation has neither download URL nor embedded content",
+                        null);
             }
             Transformation transformation = map(persistedTransformation);
 
@@ -132,7 +135,12 @@ public class CommunityTransformationAddonHandler implements MarketplaceAddonHand
     }
 
     private String downloadTransformation(String urlString) throws IOException {
-        URL u = new URL(urlString);
+        URL u;
+        try {
+            u = (new URI(urlString)).toURL();
+        } catch (IllegalArgumentException | URISyntaxException e) {
+            throw new IOException(e);
+        }
         try (InputStream in = u.openStream()) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
@@ -151,7 +159,8 @@ public class CommunityTransformationAddonHandler implements MarketplaceAddonHand
 
     private PersistedTransformation addTransformationFromJSON(String id, String json) {
         try {
-            PersistedTransformation transformation = gson.fromJson(json, PersistedTransformation.class);
+            PersistedTransformation transformation = Objects
+                    .requireNonNull(gson.fromJson(json, PersistedTransformation.class));
             storage.put(id, transformation);
             return transformation;
         } catch (JsonParseException e) {

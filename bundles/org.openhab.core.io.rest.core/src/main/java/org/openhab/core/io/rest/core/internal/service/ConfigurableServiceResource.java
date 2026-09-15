@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -75,6 +75,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -150,7 +151,7 @@ public class ConfigurableServiceResource implements RESTResource {
         if (configurableService != null) {
             return Response.ok(configurableService).build();
         } else {
-            return Response.status(404).build();
+            return Response.status(Status.NOT_FOUND).build();
         }
     }
 
@@ -174,7 +175,7 @@ public class ConfigurableServiceResource implements RESTResource {
                 + "=*))";
         List<ConfigurableServiceDTO> services = getServicesByFilter(filter, locale);
         if (services.size() == 1) {
-            return services.get(0);
+            return services.getFirst();
         }
         return null;
     }
@@ -200,7 +201,7 @@ public class ConfigurableServiceResource implements RESTResource {
     @Path("/{serviceId}/config")
     @Produces({ MediaType.APPLICATION_JSON })
     @Operation(operationId = "getServiceConfig", summary = "Get service configuration for given service ID.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(type = "object"))),
             @ApiResponse(responseCode = "500", description = "Configuration can not be read due to internal error") })
     public Response getConfiguration(@PathParam("serviceId") @Parameter(description = "service ID") String serviceId) {
         try {
@@ -217,14 +218,14 @@ public class ConfigurableServiceResource implements RESTResource {
     @Path("/{serviceId}/config")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces({ MediaType.APPLICATION_JSON })
-    @Operation(operationId = "updateServiceConfig", summary = "Updates a service configuration for given service ID and returns the old configuration.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
+    @Operation(operationId = "updateServiceConfig", summary = "Updates a service configuration for given service ID and returns the old configuration.", requestBody = @RequestBody(required = false, content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(type = "object"))), responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(type = "object"))),
             @ApiResponse(responseCode = "204", description = "No old configuration"),
             @ApiResponse(responseCode = "500", description = "Configuration can not be updated due to internal error") })
     public Response updateConfiguration(
             @HeaderParam("Accept-Language") @Parameter(description = "language") @Nullable String language,
             @PathParam("serviceId") @Parameter(description = "service ID") String serviceId,
-            @Nullable Map<String, Object> configuration) {
+            @Nullable Map<String, @Nullable Object> configuration) {
         Locale locale = localeService.getLocale(language);
         try {
             Configuration oldConfiguration = configurationService.get(serviceId);
@@ -238,8 +239,8 @@ public class ConfigurableServiceResource implements RESTResource {
         }
     }
 
-    private @Nullable Map<String, Object> normalizeConfiguration(@Nullable Map<String, Object> properties,
-            String serviceId, Locale locale) {
+    private @Nullable Map<String, @Nullable Object> normalizeConfiguration(
+            @Nullable Map<String, @Nullable Object> properties, String serviceId, Locale locale) {
         if (properties == null || properties.isEmpty()) {
             return properties;
         }
@@ -269,14 +270,13 @@ public class ConfigurableServiceResource implements RESTResource {
     @Path("/{serviceId}/config")
     @Produces({ MediaType.APPLICATION_JSON })
     @Operation(operationId = "deleteServiceConfig", summary = "Deletes a service configuration for given service ID and returns the old configuration.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(type = "object"))),
             @ApiResponse(responseCode = "204", description = "No old configuration"),
             @ApiResponse(responseCode = "500", description = "Configuration can not be deleted due to internal error") })
     public Response deleteConfiguration(
             @PathParam("serviceId") @Parameter(description = "service ID") String serviceId) {
         try {
-            Configuration oldConfiguration = configurationService.get(serviceId);
-            configurationService.delete(serviceId);
+            Configuration oldConfiguration = configurationService.delete(serviceId);
             return oldConfiguration != null ? Response.ok(oldConfiguration).build() : Response.noContent().build();
         } catch (IOException ex) {
             logger.error("Cannot delete configuration for service {}: {}", serviceId, ex.getMessage(), ex);
@@ -391,9 +391,9 @@ public class ConfigurableServiceResource implements RESTResource {
             case 0:
                 return "";
             case 1:
-                return pids.get(0);
+                return pids.getFirst();
             default: // multiple entries
-                final String first = pids.get(0);
+                final String first = pids.getFirst();
                 boolean differences = false;
                 for (int i = 1; i < pids.size(); ++i) {
                     if (!first.equals(pids.get(i))) {

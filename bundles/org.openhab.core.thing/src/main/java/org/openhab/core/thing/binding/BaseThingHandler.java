@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -23,6 +23,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.common.ThreadPoolManager;
 import org.openhab.core.config.core.ConfigDescription;
+import org.openhab.core.config.core.ConfigUtil;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.config.core.validation.ConfigValidationException;
 import org.openhab.core.thing.Bridge;
@@ -62,6 +63,7 @@ import org.slf4j.LoggerFactory;
  * @author Kai Kreuzer - Refactored isLinked method to not use deprecated functions anymore
  * @author Christoph Weitkamp - Moved OSGI ServiceTracker from BaseThingHandler to ThingHandlerCallback
  * @author Jan N. Klug - added time series support
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public abstract class BaseThingHandler implements ThingHandler {
@@ -73,6 +75,8 @@ public abstract class BaseThingHandler implements ThingHandler {
             .getScheduledPool(THING_HANDLER_THREADPOOL_NAME);
 
     protected Thing thing;
+
+    private volatile @Nullable Configuration resolvedConfig;
 
     private @Nullable ThingHandlerCallback callback;
 
@@ -131,7 +135,7 @@ public abstract class BaseThingHandler implements ThingHandler {
      * @return true if the parameters would result in a modified configuration, false otherwise
      */
     protected boolean isModifyingCurrentConfig(Map<String, Object> configurationParameters) {
-        Configuration currentConfig = getConfig();
+        Configuration currentConfig = getRawConfig();
         for (Entry<String, Object> entry : configurationParameters.entrySet()) {
             if (!Objects.equals(currentConfig.get(entry.getKey()), entry.getValue())) {
                 return true;
@@ -153,8 +157,31 @@ public abstract class BaseThingHandler implements ThingHandler {
     @Override
     public void thingUpdated(Thing thing) {
         dispose();
-        this.thing = thing;
+        setThing(thing);
         initialize();
+    }
+
+    /**
+     * Replaces the {@link Thing} handled by this handler and refreshes its resolved configuration.
+     * <p>
+     * Custom {@link #thingUpdated(Thing)} implementations should use this method instead of assigning directly to
+     * {@link #thing}, so the Thing and resolved configuration remain consistent.
+     *
+     * @param thing the updated Thing
+     */
+    protected final void setThing(Thing thing) {
+        Configuration resolvedConfiguration;
+        try {
+            resolvedConfiguration = ConfigUtil.resolveVariables(thing.getConfiguration());
+        } catch (IllegalArgumentException e) {
+            logger.warn("Updated thing '{}' with a thing containing invalid configuration '{}': {}", thing.getUID(),
+                    thing.getConfiguration(), e.getMessage());
+            resolvedConfiguration = thing.getConfiguration();
+        }
+        synchronized (this) {
+            this.thing = thing;
+            this.resolvedConfig = resolvedConfiguration;
+        }
     }
 
     @Override
@@ -238,12 +265,42 @@ public abstract class BaseThingHandler implements ThingHandler {
     }
 
     /**
+     * Returns the raw configuration of the thing.
+     * Variable patterns are not resolved.
+     *
+     * @return raw configuration of the thing
+     */
+    private Configuration getRawConfig() {
+        return getThing().getConfiguration();
+    }
+
+    /**
      * Returns the configuration of the thing.
+     * Variable patterns are automatically resolved to the variable value.
+     *
+     * <p>
+     * To modify the configuration, retrieve an editable configuration through {@link #editConfiguration()} and persist
+     * the changed configuration with {@link #updateConfiguration(Configuration)}.
      *
      * @return configuration of the thing
      */
     protected Configuration getConfig() {
-        return getThing().getConfiguration();
+        Configuration resolvedConfig = this.resolvedConfig;
+        if (resolvedConfig == null) {
+            synchronized (this) {
+                resolvedConfig = this.resolvedConfig;
+                if (resolvedConfig == null) {
+                    try {
+                        this.resolvedConfig = resolvedConfig = ConfigUtil.resolveVariables(getRawConfig());
+                    } catch (IllegalArgumentException e) {
+                        logger.warn("Failed to resolve variables for configuration '{}' of thing '{}': {}",
+                                getRawConfig(), getThing().getUID(), e.getMessage());
+                        return new Configuration(getRawConfig());
+                    }
+                }
+            }
+        }
+        return new Configuration(resolvedConfig);
     }
 
     /**
@@ -310,6 +367,7 @@ public abstract class BaseThingHandler implements ThingHandler {
 
     /**
      * Send a time series to the channel. This can be used to transfer historic data or forecasts.
+     * Will use the thing UID to infer the unique channel UID from the given ID.
      *
      * @param channelID id of the channel
      * @param timeSeries the {@link TimeSeries} that is sent
@@ -350,17 +408,16 @@ public abstract class BaseThingHandler implements ThingHandler {
 
     /**
      * Emits an event for the given channel. Will use the thing UID to infer the
-     * unique channel UID.
+     * unique channel UID from the given ID.
      *
-     * @param channelUID UID of the channel over which the event will be emitted
+     * @param channelID ID of the channel over which the event will be emitted
      */
-    protected void triggerChannel(String channelUID) {
-        triggerChannel(new ChannelUID(this.getThing().getUID(), channelUID), "");
+    protected void triggerChannel(String channelID) {
+        triggerChannel(new ChannelUID(this.getThing().getUID(), channelID), "");
     }
 
     /**
-     * Emits an event for the given channel. Will use the thing UID to infer the
-     * unique channel UID.
+     * Emits an event for the given channel.
      *
      * @param channelUID UID of the channel over which the event will be emitted
      */
@@ -369,7 +426,8 @@ public abstract class BaseThingHandler implements ThingHandler {
     }
 
     /**
-     * Sends a command for a channel of the thing.
+     * Sends a command for a channel of the thing. Will use the thing UID to infer the
+     * unique channel UID from the given ID.
      *
      * @param channelID id of the channel, which sends the command
      * @param command command
@@ -446,7 +504,8 @@ public abstract class BaseThingHandler implements ThingHandler {
         return ThingBuilder.create(this.thing.getThingTypeUID(), this.thing.getUID())
                 .withBridge(this.thing.getBridgeUID()).withChannels(this.thing.getChannels())
                 .withConfiguration(this.thing.getConfiguration()).withLabel(this.thing.getLabel())
-                .withLocation(this.thing.getLocation()).withProperties(this.thing.getProperties());
+                .withLocation(this.thing.getLocation()).withProperties(this.thing.getProperties())
+                .withSemanticEquipmentTag(this.thing.getSemanticEquipmentTag());
     }
 
     /**
@@ -458,7 +517,7 @@ public abstract class BaseThingHandler implements ThingHandler {
      * {@link ThingHandlerCallback#validateConfigurationParameters(Thing, Map)}. It is also necessary to ensure that all
      * channel configurations are valid by calling
      * {@link ThingHandlerCallback#validateConfigurationParameters(Channel, Map)}.
-     * 
+     *
      * @param thing thing, that was updated and should be persisted
      */
     @SuppressWarnings("PMD.CompareObjectsWithEquals")
@@ -473,17 +532,26 @@ public abstract class BaseThingHandler implements ThingHandler {
                     this.getClass().getSimpleName(), thing.getUID());
             return;
         }
+        Configuration resolvedConfiguration;
         try {
-            callback.validateConfigurationParameters(thing, thing.getConfiguration().getProperties());
+            resolvedConfiguration = ConfigUtil.resolveVariables(thing.getConfiguration());
+        } catch (IllegalArgumentException e) {
+            logger.warn("Attempt to update thing '{}' with a thing containing invalid configuration '{}' blocked: {}",
+                    thing.getUID(), thing.getConfiguration(), e.getMessage());
+            return;
+        }
+        try {
+            callback.validateConfigurationParameters(thing, resolvedConfiguration.getProperties());
             thing.getChannels().forEach(channel -> callback.validateConfigurationParameters(channel,
                     channel.getConfiguration().getProperties()));
         } catch (ConfigValidationException e) {
             logger.warn(
-                    "Attempt to update thing '{}' with a thing containing invalid configuration '{}', blocked. This is most likely a bug.",
-                    thing.getUID(), thing.getConfiguration());
+                    "Attempt to update thing '{}' with a thing containing invalid configuration '{}' blocked. This is most likely a bug: {}",
+                    thing.getUID(), thing.getConfiguration(), e.getValidationMessages());
             return;
         }
         synchronized (this) {
+            this.resolvedConfig = resolvedConfiguration;
             this.thing = thing;
             callback.thingUpdated(thing);
         }
@@ -496,7 +564,7 @@ public abstract class BaseThingHandler implements ThingHandler {
      * @return copy of the thing configuration (not null)
      */
     protected Configuration editConfiguration() {
-        Map<String, Object> properties = this.thing.getConfiguration().getProperties();
+        Map<String, Object> properties = getRawConfig().getProperties();
         return new Configuration(new HashMap<>(properties));
     }
 
@@ -509,15 +577,24 @@ public abstract class BaseThingHandler implements ThingHandler {
      * @param configuration configuration, that was updated and should be persisted
      */
     protected void updateConfiguration(Configuration configuration) {
-        Map<String, Object> old = this.thing.getConfiguration().getProperties();
+        Map<String, Object> old = getRawConfig().getProperties();
+        Configuration oldResolved = getConfig();
         ThingHandlerCallback callback = this.callback;
         if (callback == null) {
             logger.warn("Handler {} tried updating its configuration although the handler was already disposed.",
                     this.getClass().getSimpleName());
             return;
         }
+        Configuration resolvedConfiguration;
         try {
-            callback.validateConfigurationParameters(this.thing, configuration.getProperties());
+            resolvedConfiguration = ConfigUtil.resolveVariables(configuration);
+        } catch (IllegalArgumentException e) {
+            logger.warn("Attempt to apply configuration '{}' on thing '{}' blocked: {}", configuration, thing.getUID(),
+                    e.getMessage());
+            return;
+        }
+        try {
+            callback.validateConfigurationParameters(this.thing, resolvedConfiguration.getProperties());
         } catch (ConfigValidationException e) {
             logger.warn(
                     "Attempt to apply invalid configuration '{}' on thing '{}' blocked. This is most likely a bug: {}",
@@ -525,15 +602,19 @@ public abstract class BaseThingHandler implements ThingHandler {
             return;
         }
         try {
-            this.thing.getConfiguration().setProperties(configuration.getProperties());
             synchronized (this) {
+                this.resolvedConfig = resolvedConfiguration;
+                this.thing.getConfiguration().setProperties(configuration.getProperties());
                 callback.thingUpdated(thing);
             }
         } catch (RuntimeException e) {
             logger.warn(
                     "Error while applying configuration changes: '{}: {}' - reverting configuration changes on thing '{}'.",
                     e.getClass().getSimpleName(), e.getMessage(), this.thing.getUID().getAsString());
-            this.thing.getConfiguration().setProperties(old);
+            synchronized (this) {
+                this.thing.getConfiguration().setProperties(old);
+                this.resolvedConfig = oldResolved;
+            }
             throw e;
         }
     }
@@ -637,6 +718,7 @@ public abstract class BaseThingHandler implements ThingHandler {
 
     /**
      * Returns whether at least one item is linked for the given channel ID.
+     * Will use the thing UID to infer the unique channel UID from the given ID.
      *
      * @param channelId channel ID (must not be null)
      * @return true if at least one item is linked, false otherwise

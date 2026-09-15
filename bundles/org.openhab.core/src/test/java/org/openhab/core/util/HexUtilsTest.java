@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,6 +13,8 @@
 package org.openhab.core.util;
 
 import static org.junit.jupiter.api.Assertions.*;
+
+import java.math.BigInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
@@ -71,5 +73,25 @@ public class HexUtilsTest {
         final String str = HexUtils.bytesToHex(input);
         final byte[] output = HexUtils.hexToBytes(str);
         assertArrayEquals(input, output);
+    }
+
+    @Test
+    public void testHexBlockToBytes() {
+        final String input = """
+                0000 0000
+                    F00f
+                                """;
+        final byte[] output = HexUtils.hexBlockToBytes(input);
+        assertArrayEquals(new byte[] { 0, 0, 0, 0, (byte) 240, (byte) 15 }, output);
+    }
+
+    @Test
+    public void hexBlockToBigInteger() {
+        final String input = """
+                0000 0000
+                    F00f
+                                """;
+        final BigInteger output = HexUtils.hexBlockToBigInteger(input);
+        assertEquals(new BigInteger("61455"), output);
     }
 }

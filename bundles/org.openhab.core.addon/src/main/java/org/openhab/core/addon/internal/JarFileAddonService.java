@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -52,7 +52,7 @@ import org.slf4j.LoggerFactory;
 @Component(immediate = true, service = AddonService.class, name = JarFileAddonService.SERVICE_NAME)
 public class JarFileAddonService extends BundleTracker<Bundle> implements AddonService {
     public static final String SERVICE_ID = "jar";
-    public static final String SERVICE_NAME = "JAR-File add-on service";
+    public static final String SERVICE_NAME = "jar-file-add-on-service";
     private static final String ADDONS_CONTENT_TYPE = "application/vnd.openhab.bundle";
 
     private static final Map<String, AddonType> ADDON_TYPE_MAP = Map.of( //
@@ -157,6 +157,7 @@ public class JarFileAddonService extends BundleTracker<Bundle> implements AddonS
                 .withConnection(addonInfo.getConnection()).withCountries(addonInfo.getCountries())
                 .withConfigDescriptionURI(addonInfo.getConfigDescriptionURI())
                 .withDescription(Objects.requireNonNullElse(addonInfo.getDescription(), bundle.getSymbolicName()))
+                .withKeywords(Objects.requireNonNullElse(addonInfo.getKeywords(), ""))
                 .withContentType(ADDONS_CONTENT_TYPE).withLoggerPackages(List.of(bundle.getSymbolicName())).build();
     }
 

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -129,6 +129,7 @@ public class ThingManagerImpl implements ReadyTracker, ThingManager, ThingTracke
 
     // time after we try to initialize a thing even if the thing-type is not registered (in s)
     private static final int MAX_CHECK_PREREQUISITE_TIME = 120;
+    private static final int MAX_BRIDGE_NESTING = 50;
     private static final ReadyMarker READY_MARKER_THINGS_LOADED = new ReadyMarker("things", "handler");
     private static final String THING_STATUS_STORAGE_NAME = "thing_status_storage";
     private static final String FORCE_REMOVE_THREAD_POOL_NAME = "forceRemove";
@@ -210,7 +211,7 @@ public class ThingManagerImpl implements ReadyTracker, ThingManager, ThingTracke
 
         this.thingRegistry.addThingTracker(this);
         readyService.registerTracker(this, new ReadyMarkerFilter().withType(StartLevelService.STARTLEVEL_MARKER_TYPE)
-                .withIdentifier(Integer.toString(StartLevelService.STARTLEVEL_MODEL)));
+                .withIdentifier(Integer.toString(StartLevelService.STARTLEVEL_STATES)));
     }
 
     @Deactivate
@@ -245,7 +246,7 @@ public class ThingManagerImpl implements ReadyTracker, ThingManager, ThingTracke
                     "Provider for thing {0} cannot be determined because it is not known to the registry",
                     thing.getUID().getAsString()));
         }
-        if (provider instanceof ManagedProvider<Thing, ThingUID> managedProvider) {
+        if (provider instanceof ManagedProvider managedProvider) {
             managedProvider.update(thing);
         } else {
             logger.debug("Only updating thing {} in the registry because provider {} is not managed.",
@@ -429,6 +430,7 @@ public class ThingManagerImpl implements ReadyTracker, ThingManager, ThingTracke
                 if (thingHandler != null) {
                     if (ThingHandlerHelper.isHandlerInitialized(newThing)
                             || newThing.getStatus() == ThingStatus.INITIALIZING) {
+                        logger.debug("Notify handler about updated thing '{}'", newThing.getUID());
                         oldThing.setHandler(null);
                         newThing.setHandler(thingHandler);
 
@@ -452,26 +454,32 @@ public class ThingManagerImpl implements ReadyTracker, ThingManager, ThingTracke
                     } else {
                         logger.debug(
                                 "Cannot notify handler about updated thing '{}', because handler is not initialized (thing must be in status UNKNOWN, ONLINE or OFFLINE).",
-                                newThing.getThingTypeUID());
+                                newThing.getUID());
                         if (thingHandler.getThing() == newThing) {
-                            logger.debug("Initializing handler of thing '{}'", newThing.getThingTypeUID());
+                            logger.debug("Initializing handler of thing '{}'", newThing.getUID());
                             oldThing.setHandler(null);
                             newThing.setHandler(thingHandler);
                             initializeHandler(newThing);
                         } else {
-                            logger.debug("Replacing uninitialized handler for updated thing '{}'",
-                                    newThing.getThingTypeUID());
+                            logger.debug("Replacing uninitialized handler for updated thing '{}'", newThing.getUID());
                             ThingHandlerFactory thingHandlerFactory = getThingHandlerFactory(newThing);
                             if (thingHandlerFactory != null) {
-                                unregisterHandler(thingHandler.getThing(), thingHandlerFactory);
+                                logger.debug("unregisterAndDisposeHandler called from thingUpdated for thing {}",
+                                        thingHandler.getThing().getUID());
+                                unregisterAndDisposeHandler(thingHandlerFactory, thingHandler.getThing(), thingHandler);
                             } else {
-                                logger.debug("No ThingHandlerFactory available that can handle {}",
-                                        newThing.getThingTypeUID());
+                                logger.debug("No ThingHandlerFactory available that can handle {}", newThing.getUID());
                             }
+                            logger.debug(
+                                    "registerAndInitializeHandler called from thingUpdated for thing {} when thing handler is defined",
+                                    newThing.getUID());
                             registerAndInitializeHandler(newThing, thingHandlerFactory);
                         }
                     }
                 } else {
+                    logger.debug(
+                            "registerAndInitializeHandler called from thingUpdated for thing {} when thing handler is not defined",
+                            newThing.getUID());
                     registerAndInitializeHandler(newThing, getThingHandlerFactory(newThing));
                 }
             } finally {
@@ -1093,7 +1101,7 @@ public class ThingManagerImpl implements ReadyTracker, ThingManager, ThingTracke
         ThingBuilder thingBuilder = thing instanceof Bridge bridge ? BridgeBuilder.create(bridge)
                 : ThingBuilder.create(thing);
         instructions.forEach(instruction -> instruction.perform(thing, thingBuilder));
-        int newThingTypeVersion = instructions.get(instructions.size() - 1).getThingTypeVersion();
+        int newThingTypeVersion = instructions.getLast().getThingTypeVersion();
         thingBuilder.withProperty(PROPERTY_THING_TYPE_VERSION, String.valueOf(newThingTypeVersion));
         logger.info("Updating '{}' from version {} to {}", thing.getUID(), currentThingTypeVersion,
                 newThingTypeVersion);
@@ -1121,6 +1129,9 @@ public class ThingManagerImpl implements ReadyTracker, ThingManager, ThingTracke
                     Thing thing = things.get(prerequisites.thingUID);
                     if (thing != null) {
                         if (!isHandlerRegistered(thing)) {
+                            logger.debug(
+                                    "registerAndInitializeHandler called from checkMissingPrerequisites for thing {}",
+                                    prerequisites.thingUID);
                             registerAndInitializeHandler(thing, getThingHandlerFactory(thing));
                         } else {
                             logger.warn(
@@ -1172,17 +1183,45 @@ public class ThingManagerImpl implements ReadyTracker, ThingManager, ThingTracke
         updateInstructions.keySet().removeIf(key -> thingHandlerFactory.equals(key.factory()));
     }
 
+    private boolean allEnabledThingsAreInitialized() {
+        for (Thing thing : things.values()) {
+            if (!thing.isEnabled() || ThingHandlerHelper.isHandlerInitialized(thing)) {
+                continue;
+            }
+
+            int bridgeNestingLevel = 0;
+            boolean bridgeDisabled = false;
+            Bridge bridge = getBridge(thing.getBridgeUID());
+            while (bridge != null) {
+                if (!bridge.isEnabled()) {
+                    bridgeDisabled = true;
+                    break;
+                }
+                bridge = getBridge(bridge.getBridgeUID());
+                if (bridgeNestingLevel++ > MAX_BRIDGE_NESTING) {
+                    logger.warn("Bridge nesting is too deep for thing '{}'", thing.getUID());
+                    return false;
+                }
+            }
+            if (bridgeDisabled) {
+                logger.debug("Thing '{}' is not ready because its bridge is disabled.", thing.getUID());
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
     @Override
     public void onReadyMarkerAdded(ReadyMarker readyMarker) {
         startLevelSetterJob = scheduler.scheduleWithFixedDelay(() -> {
-            if (things.values().stream().anyMatch(t -> !ThingHandlerHelper.isHandlerInitialized(t) && t.isEnabled())) {
-                return;
+            if (allEnabledThingsAreInitialized()) {
+                readyService.markReady(READY_MARKER_THINGS_LOADED);
+                if (startLevelSetterJob != null) {
+                    startLevelSetterJob.cancel(false);
+                }
+                readyService.unregisterTracker(this);
             }
-            readyService.markReady(READY_MARKER_THINGS_LOADED);
-            if (startLevelSetterJob != null) {
-                startLevelSetterJob.cancel(false);
-            }
-            readyService.unregisterTracker(this);
         }, CHECK_INTERVAL, CHECK_INTERVAL, TimeUnit.SECONDS);
         prerequisiteCheckerJob = scheduler.scheduleWithFixedDelay(this::checkMissingPrerequisites, CHECK_INTERVAL,
                 CHECK_INTERVAL, TimeUnit.SECONDS);

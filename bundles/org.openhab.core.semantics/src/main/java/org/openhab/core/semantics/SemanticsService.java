@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -78,4 +78,14 @@ public interface SemanticsService {
      * @return the list containing the label and all synonyms of a semantic tag
      */
     List<String> getLabelAndSynonyms(Class<? extends Tag> tagClass, Locale locale);
+
+    /**
+     * Verifies the semantics of an item
+     *
+     * @param item
+     * @return list of semantics configuration problems
+     */
+    default List<ItemSemanticsProblem> getItemSemanticsProblems(Item item) {
+        return List.of();
+    }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,10 +12,15 @@
  */
 package org.openhab.core;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.osgi.annotation.bundle.Header;
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.Constants;
+import org.osgi.framework.ServiceReference;
+import org.osgi.service.cm.Configuration;
+import org.osgi.service.cm.ConfigurationAdmin;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,17 +30,28 @@ import org.slf4j.LoggerFactory;
  * @author Jan N. Klug - Initial contribution
  */
 @Header(name = Constants.BUNDLE_ACTIVATOR, value = "${@class}")
+@NonNullByDefault
 public final class Activator implements BundleActivator {
 
     private final Logger logger = LoggerFactory.getLogger(Activator.class);
 
     @Override
-    public void start(BundleContext bc) throws Exception {
+    public void start(@Nullable BundleContext bc) throws Exception {
         logger.info("Starting openHAB {} ({})", OpenHAB.getVersion(), OpenHAB.buildString());
+        ServiceReference<ConfigurationAdmin> ref;
+        if (bc != null && (ref = bc.getServiceReference(ConfigurationAdmin.class)) != null) {
+            ConfigurationAdmin ca = bc.getService(ref);
+            Configuration conf = ca.getConfiguration(OpenHAB.ADDONS_SERVICE_PID);
+            conf.setBundleLocation("?openhab");
+            bc.ungetService(ref);
+        } else {
+            logger.warn("Could not acquire ConfigurationAdmin instance, configuration \"{}\" might not work correctly",
+                    OpenHAB.ADDONS_SERVICE_PID);
+        }
     }
 
     @Override
-    public void stop(BundleContext context) throws Exception {
+    public void stop(@Nullable BundleContext context) throws Exception {
         // do nothing
     }
 }

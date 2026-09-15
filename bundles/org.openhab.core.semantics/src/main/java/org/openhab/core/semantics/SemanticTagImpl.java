@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -112,6 +112,7 @@ public class SemanticTagImpl implements SemanticTag {
                 Control.getNoFallbackControl(Control.FORMAT_PROPERTIES));
         String label;
         List<String> synonyms;
+        String description;
         try {
             String entry = rb.getString(uid);
             int idx = entry.indexOf(",");
@@ -127,7 +128,12 @@ public class SemanticTagImpl implements SemanticTag {
             label = getLabel();
             synonyms = getSynonyms();
         }
+        try {
+            description = rb.getString(uid + "__description");
+        } catch (MissingResourceException e) {
+            description = getDescription();
+        }
 
-        return new SemanticTagImpl(uid, label, getDescription(), synonyms);
+        return new SemanticTagImpl(uid, label, description, synonyms);
     }
 }

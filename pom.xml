@@ -1,6 +1,7 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
@@ -11,7 +12,7 @@
 
   <groupId>org.openhab.core</groupId>
   <artifactId>org.openhab.core.reactor</artifactId>
-  <version>4.3.0-SNAPSHOT</version>
+  <version>5.3.0-SNAPSHOT</version>
 
   <packaging>pom</packaging>
 
@@ -64,20 +65,35 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <maven.compiler.release>17</maven.compiler.release>
+    <oh.java.version>21</oh.java.version>
+    <maven.compiler.release>${oh.java.version}</maven.compiler.release>
+    <!-- source/target is required by xtend, otherwise Java 11 is used for some files -->
+    <maven.compiler.source>${oh.java.version}</maven.compiler.source>
+    <maven.compiler.target>${oh.java.version}</maven.compiler.target>
 
-    <bnd.version>7.0.0</bnd.version>
-    <commons.net.version>3.7.2</commons.net.version>
-    <eea.version>2.3.0</eea.version>
-    <karaf.compile.version>4.4.6</karaf.compile.version>
-    <karaf.tooling.version>4.4.6</karaf.tooling.version>
-    <sat.version>0.16.0</sat.version>
-    <slf4j.version>2.0.12</slf4j.version>
-    <xtext.version>2.35.0</xtext.version>
-    <spotless.version>2.43.0</spotless.version>
+    <asm.version>9.9.1</asm.version>
+    <bnd.version>7.4.0</bnd.version>
+    <bouncycastle.version>1.86</bouncycastle.version>
+    <commons.net.version>3.13.0</commons.net.version>
+    <eea.version>2.4.0</eea.version>
+    <jackson.annotations.version>2.22</jackson.annotations.version>
+    <jackson.version>2.22.2</jackson.version>
+    <karaf.compile.version>4.4.11</karaf.compile.version>
+    <karaf.tooling.version>4.4.11</karaf.tooling.version>
+    <sat.version>0.18.0</sat.version>
+    <slf4j.version>2.0.17</slf4j.version>
+    <xtext.version>2.43.0</xtext.version>
+    <spotless.version>2.44.3</spotless.version>
     <!-- Eclipse Java formatter version 4.26+ does not check test files -->
     <spotless.eclipse.version>4.25</spotless.eclipse.version>
     <spotless.eclipse.wtp.version>4.21.0</spotless.eclipse.wtp.version>
+    <swagger.version>2.2.54</swagger.version>
+
+    <!-- TEST -->
+    <!-- cxf can be updated independently, karaf only uses it in tests -->
+    <cxf.version>3.6.10</cxf.version>
+    <junit.version>5.14.4</junit.version>
+    <mockito.version>5.23.0</mockito.version>
   </properties>
 
   <dependencyManagement>
@@ -127,24 +143,24 @@
           <configuration>
             <bnd><![CDATA[Bundle-SymbolicName: ${project.artifactId}
 Automatic-Module-Name: ${def;bsn}
-Import-Package: \\
-  io.swagger.v3.oas.annotations.*;resolution:=optional,\\
-  javax.annotation.security.*;resolution:=optional,\\
-  org.eclipse.jdt.annotation.*;resolution:=optional,\\
-  org.openhab.core.automation.annotation.*;resolution:=optional,\\
-  com.google.common.*;version="14.0",\\
+Import-Package: \
+  io.swagger.v3.oas.annotations.*;resolution:=optional,\
+  javax.annotation.security.*;resolution:=optional,\
+  org.eclipse.jdt.annotation.*;resolution:=optional,\
+  org.openhab.core.automation.annotation.*;resolution:=optional,\
+  com.google.common.*;version="14.0",\
   *
--exportcontents: \\
-  !*.internal.*,\\
-  !*.impl.*, \\
-  org.openhab.*,\\
+-exportcontents: \
+  !*.internal.*,\
+  !*.impl.*, \
+  org.openhab.*,\
   org.openhab.core.*
 -noimportjava: true
 -sources: false
 -contract: *
 -includeresource: -${.}/NOTICE, -${.}/*.xsd
--fixupmessages: \\
-  'Unused Import-Package instructions';is:=ignore,\\
+-fixupmessages: \
+  'Unused Import-Package instructions';is:=ignore,\
   'Unused Export-Package instructions';is:=ignore]]></bnd>
             <!-- Bundle-SymbolicName: ${project.groupId}.${project.artifactId} -->
             <skipIfEmpty>true</skipIfEmpty>
@@ -268,13 +284,13 @@ Import-Package: \\
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-clean-plugin</artifactId>
-          <version>3.3.2</version>
+          <version>3.5.0</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.13.0</version>
+          <version>3.16.0</version>
           <configuration>
             <compilerId>eclipse</compilerId>
             <compilerArgs>
@@ -292,12 +308,12 @@ Import-Package: \\
             <dependency>
               <groupId>org.codehaus.plexus</groupId>
               <artifactId>plexus-compiler-eclipse</artifactId>
-              <version>2.12.1</version>
+              <version>2.17.0</version>
             </dependency>
             <dependency>
               <groupId>org.eclipse.jdt</groupId>
               <artifactId>ecj</artifactId>
-              <version>3.36.0</version>
+              <version>3.46.100</version>
             </dependency>
           </dependencies>
         </plugin>
@@ -305,32 +321,33 @@ Import-Package: \\
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-deploy-plugin</artifactId>
-          <version>3.1.2</version>
+          <version>3.1.4</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-enforcer-plugin</artifactId>
-          <version>3.4.1</version>
+          <version>3.6.3</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-install-plugin</artifactId>
-          <version>3.1.1</version>
+          <version>3.1.4</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-jar-plugin</artifactId>
-          <version>3.4.1</version>
+          <version>3.4.2</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-javadoc-plugin</artifactId>
-          <version>3.6.3</version>
+          <version>3.12.0</version>
           <configuration>
+            <outputDirectory>${project.build.directory}/site</outputDirectory>
             <failOnError>true</failOnError>
             <failOnWarnings>true</failOnWarnings>
             <doclint>none</doclint>
@@ -339,15 +356,13 @@ Import-Package: \\
             <!-- The search function is broken without the workaround below -->
             <!-- See: https://stackoverflow.com/questions/52326318/maven-javadoc-search-redirects-to-undefined-url -->
             <additionalJOption>--allow-script-in-comments</additionalJOption>
-            <bottom>
-              <![CDATA[
+            <bottom><![CDATA[
                 <script>
                 if (typeof useModuleDirectories !== 'undefined') {
                   useModuleDirectories = false;
                 }
                 </script>
-              ]]>
-            </bottom>
+              ]]></bottom>
             <tags>
               <tag>
                 <name>apiNote</name>
@@ -360,19 +375,27 @@ Import-Package: \\
                 <head>Implementation note:</head>
               </tag>
             </tags>
+            <additionalDependencies>
+              <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-annotations</artifactId>
+                <version>${swagger.version}</version>
+                <scope>compile</scope>
+              </dependency>
+            </additionalDependencies>
           </configuration>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-plugin-plugin</artifactId>
-          <version>3.12.0</version>
+          <version>3.16.0</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-release-plugin</artifactId>
-          <version>3.0.1</version>
+          <version>3.3.1</version>
           <configuration>
             <preparationGoals>clean install</preparationGoals>
           </configuration>
@@ -381,30 +404,30 @@ Import-Package: \\
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-resources-plugin</artifactId>
-          <version>3.3.1</version>
+          <version>3.5.0</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-site-plugin</artifactId>
-          <version>3.12.1</version>
+          <version>3.22.0</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-source-plugin</artifactId>
-          <version>3.3.1</version>
+          <version>3.4.0</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
-          <version>3.2.5</version>
+          <version>3.6.0</version>
           <configuration>
-            <argLine>
-              --add-opens java.base/java.net=ALL-UNNAMED
+            <argLine>--add-opens java.base/java.net=ALL-UNNAMED
               --add-opens java.base/java.util=ALL-UNNAMED
-            </argLine>
+              -javaagent:"${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar"
+              -Xshare:off</argLine>
             <systemPropertyVariables>
               <junit.jupiter.execution.timeout.default>15 m</junit.jupiter.execution.timeout.default>
             </systemPropertyVariables>
@@ -412,7 +435,7 @@ Import-Package: \\
         </plugin>
 
         <plugin>
-          <groupId>org.eclipse.xtend</groupId>
+          <groupId>org.eclipse.xtext</groupId>
           <artifactId>xtend-maven-plugin</artifactId>
           <version>${xtext.version}</version>
           <executions>
@@ -434,13 +457,13 @@ Import-Package: \\
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>build-helper-maven-plugin</artifactId>
-          <version>3.5.0</version>
+          <version>3.6.2</version>
         </plugin>
 
         <plugin>
           <groupId>com.mycila</groupId>
           <artifactId>license-maven-plugin</artifactId>
-          <version>4.3</version>
+          <version>5.1.2</version>
           <configuration>
             <basedir>${basedir}</basedir>
             <quiet>false</quiet>
@@ -448,15 +471,13 @@ Import-Package: \\
             <strictCheck>true</strictCheck>
             <aggregate>true</aggregate>
             <mapping>
-              <groovy>JAVADOC_STYLE</groovy>
-              <java>JAVADOC_STYLE</java>
-              <mwe2>JAVADOC_STYLE</mwe2>
-              <xtend>JAVADOC_STYLE</xtend>
+              <mwe2>SLASHSTAR_STYLE</mwe2>
+              <xtend>SLASHSTAR_STYLE</xtend>
               <xml>xml-header-style</xml>
             </mapping>
             <useDefaultExcludes>true</useDefaultExcludes>
             <properties>
-              <year>2024</year>
+              <year>2026</year>
             </properties>
             <encoding>UTF-8</encoding>
             <licenseSets>
@@ -497,7 +518,7 @@ Import-Package: \\
         <plugin>
           <groupId>org.openhab.core.tools</groupId>
           <artifactId>i18n-maven-plugin</artifactId>
-          <version>4.1.2</version>
+          <version>5.0.1</version>
         </plugin>
 
         <plugin>
@@ -525,29 +546,6 @@ Import-Package: \\
         </plugin>
 
         <plugin>
-          <groupId>com.github.ekryd.sortpom</groupId>
-          <artifactId>sortpom-maven-plugin</artifactId>
-          <version>3.4.1</version>
-          <configuration>
-            <predefinedSortOrder>recommended_2008_06</predefinedSortOrder>
-            <createBackupFile>false</createBackupFile>
-            <keepBlankLines>true</keepBlankLines>
-          </configuration>
-          <executions>
-            <execution>
-              <id>sortpom-verify</id>
-              <goals>
-                <goal>verify</goal>
-              </goals>
-              <phase>verify</phase>
-              <configuration>
-                <verifyFail>Stop</verifyFail>
-              </configuration>
-            </execution>
-          </executions>
-        </plugin>
-
-        <plugin>
           <groupId>com.diffplug.spotless</groupId>
           <artifactId>spotless-maven-plugin</artifactId>
           <version>${spotless.version}</version>
@@ -563,6 +561,15 @@ Import-Package: \\
               </importOrder>
               <endWithNewline/>
             </java>
+            <pom>
+              <sortPom>
+                <expandEmptyElements>false</expandEmptyElements>
+                <indentAttribute>schemaLocation</indentAttribute>
+                <predefinedSortOrder>recommended_2008_06</predefinedSortOrder>
+                <sortDependencyExclusions/>
+                <sortDependencyManagement/>
+              </sortPom>
+            </pom>
             <formats>
               <format>
                 <!-- *.xml -->
@@ -593,21 +600,6 @@ Import-Package: \\
                   <type>XML</type>
                   <files>
                     <file>openhab_wst_feature_file.prefs</file>
-                  </files>
-                  <version>${spotless.eclipse.wtp.version}</version>
-                </eclipseWtp>
-                <trimTrailingWhitespace/>
-                <endWithNewline/>
-              </format>
-              <format>
-                <!-- pom.xml -->
-                <includes>
-                  <include>pom.xml</include>
-                </includes>
-                <eclipseWtp>
-                  <type>XML</type>
-                  <files>
-                    <file>openhab_wst_pom_file.prefs</file>
                   </files>
                   <version>${spotless.eclipse.wtp.version}</version>
                 </eclipseWtp>
@@ -666,19 +658,24 @@ Import-Package: \\
             <configuration>
               <rules>
                 <requireMavenVersion>
-                  <version>3.6.3</version>
+                  <version>3.9.6</version>
                 </requireMavenVersion>
                 <requireJavaVersion>
-                  <version>[17.0,18.0),[21.0,22.0)</version>
+                  <version>[21.0,22.0),[25.0,26.0)</version>
+                </requireJavaVersion>
+                <requireJavaVersion>
+                  <version>[21.0,22.0)</version>
+                  <message>++ WARNING ++ WARNING ++ WARNING ++ WARNING ++ WARNING ++ WARNING ++
+JDK 25 compiler is in use, generating Java 21 bytecode.
+This is not officially supported.
+Consider using JDK 21 for building and testing.
+++ WARNING ++ WARNING ++ WARNING ++ WARNING ++ WARNING ++ WARNING ++</message>
+                  <level>WARN</level>
                 </requireJavaVersion>
               </rules>
             </configuration>
           </execution>
         </executions>
-      </plugin>
-      <plugin>
-        <groupId>com.github.ekryd.sortpom</groupId>
-        <artifactId>sortpom-maven-plugin</artifactId>
       </plugin>
       <plugin>
         <groupId>com.diffplug.spotless</groupId>
@@ -843,12 +840,6 @@ Import-Package: \\
           </plugins>
         </pluginManagement>
       </build>
-    </profile>
-    <profile>
-      <id>j21</id>
-      <properties>
-        <maven.compiler.release>21</maven.compiler.release>
-      </properties>
     </profile>
   </profiles>
 </project>

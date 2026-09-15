@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -68,6 +68,9 @@ public interface ScriptEngineFactory {
 
     /**
      * This method creates a new ScriptEngine based on the supplied file extension or MimeType.
+     * openHAB-core always passes as parameter one of the values, returned by getScriptTypes().
+     * The parameter serves for a ScriptEngineFactory, which announces support for several
+     * distinct languages, to create a ScriptEngine for the requested language.
      *
      * @param scriptType a file extension (script) or MimeType (ScriptAction or ScriptCondition)
      * @return ScriptEngine or null

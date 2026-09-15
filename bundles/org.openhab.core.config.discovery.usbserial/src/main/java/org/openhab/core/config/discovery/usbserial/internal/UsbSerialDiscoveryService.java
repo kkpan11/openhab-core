@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -31,6 +31,7 @@ import org.openhab.core.config.discovery.usbserial.UsbSerialDiscoveryListener;
 import org.openhab.core.config.discovery.usbserial.UsbSerialDiscoveryParticipant;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
+import org.osgi.framework.FrameworkUtil;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
@@ -101,7 +102,8 @@ public class UsbSerialDiscoveryService extends AbstractDiscoveryService implemen
         for (UsbSerialDeviceInformation usbSerialDeviceInformation : previouslyDiscovered) {
             DiscoveryResult result = participant.createResult(usbSerialDeviceInformation);
             if (result != null) {
-                thingDiscovered(createDiscoveryResultWithUsbProperties(result, usbSerialDeviceInformation));
+                thingDiscovered(createDiscoveryResultWithUsbProperties(result, usbSerialDeviceInformation),
+                        FrameworkUtil.getBundle(participant.getClass()));
             }
         }
     }
@@ -149,8 +151,9 @@ public class UsbSerialDiscoveryService extends AbstractDiscoveryService implemen
 
     @Override
     public void usbSerialDeviceDiscovered(UsbSerialDeviceInformation usbSerialDeviceInformation) {
-        logger.debug("Discovered new USB-Serial device: {}", usbSerialDeviceInformation);
-        previouslyDiscovered.add(usbSerialDeviceInformation);
+        if (previouslyDiscovered.add(usbSerialDeviceInformation)) {
+            logger.debug("Discovered new USB-Serial device: {}", usbSerialDeviceInformation);
+        }
         for (UsbSerialDiscoveryParticipant participant : discoveryParticipants) {
             DiscoveryResult result = participant.createResult(usbSerialDeviceInformation);
             if (result != null) {
@@ -161,7 +164,7 @@ public class UsbSerialDiscoveryService extends AbstractDiscoveryService implemen
 
     @Override
     public void usbSerialDeviceRemoved(UsbSerialDeviceInformation usbSerialDeviceInformation) {
-        logger.debug("Discovered removed USB-Serial device: {}", usbSerialDeviceInformation);
+        logger.debug("Discovered removal of USB-Serial device: {}", usbSerialDeviceInformation);
         previouslyDiscovered.remove(usbSerialDeviceInformation);
         for (UsbSerialDiscoveryParticipant participant : discoveryParticipants) {
             ThingUID thingUID = participant.getThingUID(usbSerialDeviceInformation);

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -34,7 +34,6 @@ public class ThingUID extends UID {
      * class by reflection. Not intended to be used for normal instantiation.
      */
     ThingUID() {
-        super();
     }
 
     /**
@@ -156,7 +155,7 @@ public class ThingUID extends UID {
      */
     public String getId() {
         List<String> segments = getAllSegments();
-        return segments.get(segments.size() - 1);
+        return segments.getLast();
     }
 
     @Override

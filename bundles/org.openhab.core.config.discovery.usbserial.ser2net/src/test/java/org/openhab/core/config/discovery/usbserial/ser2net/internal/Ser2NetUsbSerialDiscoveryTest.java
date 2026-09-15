@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,7 +12,7 @@
  */
 package org.openhab.core.config.discovery.usbserial.ser2net.internal;
 
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.openhab.core.config.discovery.usbserial.ser2net.internal.Ser2NetUsbSerialDiscovery.*;
 
@@ -202,7 +202,7 @@ public class Ser2NetUsbSerialDiscoveryTest {
     public void backgroundScanning() {
         discovery.startBackgroundScanning();
 
-        discovery.serviceAdded(serviceEvent1Mock);
+        discovery.serviceResolved(serviceEvent1Mock);
         discovery.serviceRemoved(serviceEvent1Mock);
         discovery.serviceAdded(serviceEvent2Mock);
         discovery.serviceAdded(invalidServiceEventMock);
@@ -215,7 +215,7 @@ public class Ser2NetUsbSerialDiscoveryTest {
         verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb1);
         verify(discoveryListenerMock, times(1)).usbSerialDeviceRemoved(usb1);
 
-        verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb2);
+        verify(discoveryListenerMock, never()).usbSerialDeviceDiscovered(usb2);
         verify(discoveryListenerMock, never()).usbSerialDeviceRemoved(usb2);
 
         verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb3);

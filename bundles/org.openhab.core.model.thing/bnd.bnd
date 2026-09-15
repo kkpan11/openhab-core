@@ -1,7 +1,6 @@
 Bundle-SymbolicName: ${project.artifactId}
 Export-Package: org.openhab.core.model.thing,\
  org.openhab.core.model.thing.formatting,\
- org.openhab.core.model.thing.generator,\
  org.openhab.core.model.thing.parser.antlr,\
  org.openhab.core.model.thing.parser.antlr.internal,\
  org.openhab.core.model.thing.scoping,\
@@ -21,9 +20,11 @@ Import-Package: org.apache.log4j,\
  org.openhab.core.thing,\
  org.openhab.core.thing.binding,\
  org.openhab.core.thing.binding.builder,\
+ org.openhab.core.thing.fileconverter,\
  org.openhab.core.thing.link,\
  org.openhab.core.thing.type,\
  org.openhab.core.thing.util,\
+ org.openhab.core.types,\
  org.openhab.core.types.util,\
  org.openhab.core.util,\
  org.openhab.core.model.core,\
@@ -40,7 +41,6 @@ Require-Bundle: org.antlr.runtime,\
  org.eclipse.emf.ecore,\
  org.eclipse.emf.mwe.utils;resolution:=optional,\
  org.eclipse.emf.mwe2.launch;resolution:=optional,\
- org.eclipse.xtend.lib;resolution:=optional,\
  org.eclipse.xtext.common.types,\
  org.eclipse.xtext.xtext.generator;resolution:=optional,\
  org.eclipse.xtext.util,\

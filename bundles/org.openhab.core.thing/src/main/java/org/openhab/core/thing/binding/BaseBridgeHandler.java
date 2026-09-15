@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -26,6 +26,7 @@ import org.openhab.core.thing.binding.builder.BridgeBuilder;
  *
  * @author Dennis Nobel - Initial contribution
  * @author Stefan Bußweiler - Added implementation of BridgeHandler interface
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public abstract class BaseBridgeHandler extends BaseThingHandler implements BridgeHandler {
@@ -52,7 +53,8 @@ public abstract class BaseBridgeHandler extends BaseThingHandler implements Brid
     protected BridgeBuilder editThing() {
         return BridgeBuilder.create(thing.getThingTypeUID(), thing.getUID()).withBridge(thing.getBridgeUID())
                 .withChannels(thing.getChannels()).withConfiguration(thing.getConfiguration())
-                .withLabel(thing.getLabel()).withLocation(thing.getLocation()).withProperties(thing.getProperties());
+                .withLabel(thing.getLabel()).withLocation(thing.getLocation()).withProperties(thing.getProperties())
+                .withSemanticEquipmentTag(thing.getSemanticEquipmentTag());
     }
 
     @Override

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -44,7 +44,6 @@ import org.osgi.service.component.annotations.Reference;
 @Component(service = ConsoleCommandExtension.class)
 @NonNullByDefault
 public class ItemConsoleCommandExtension extends AbstractConsoleCommandExtension {
-
     private static final String SUBCMD_LIST = "list";
     private static final String SUBCMD_CLEAR = "clear";
     private static final String SUBCMD_REMOVE = "remove";

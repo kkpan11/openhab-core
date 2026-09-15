@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,6 @@ package org.openhab.core.thing.internal.update;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
-import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.*;
 import static org.openhab.core.thing.internal.ThingManagerImpl.PROPERTY_THING_TYPE_VERSION;
 
@@ -285,11 +284,11 @@ public class ThingUpdateOSGiTest extends JavaOSGiTest {
 
         List<Channel> channels1 = updatedThing.getChannelsOfGroup("group1");
         assertThat(channels1, hasSize(1));
-        assertChannel(channels1.get(0), channelTypeUID, "Switch", "typeLabel", null);
+        assertChannel(channels1.getFirst(), channelTypeUID, "Switch", "typeLabel", null);
 
         List<Channel> channels2 = updatedThing.getChannelsOfGroup("group2");
         assertThat(channels2, hasSize(1));
-        assertChannel(channels2.get(0), channelTypeUID, "Switch", "typeLabel", null);
+        assertChannel(channels2.getFirst(), channelTypeUID, "Switch", "typeLabel", null);
     }
 
     @Test
@@ -356,7 +355,7 @@ public class ThingUpdateOSGiTest extends JavaOSGiTest {
 
         ThingTypeRegistry thingTypeRegistry = mock(ThingTypeRegistry.class);
         when(thingTypeRegistry.getThingType(eq(thingTypeUID))).thenReturn(thingType);
-        registerService(thingTypeRegistry);
+        registerService(thingTypeRegistry, ThingTypeRegistry.class.getName());
     }
 
     private void registerChannelTypes(ChannelTypeUID... channelTypeUIDs) {
@@ -372,7 +371,7 @@ public class ThingUpdateOSGiTest extends JavaOSGiTest {
         }
 
         registerService(channelTypeProvider);
-        registerService(channelTypeRegistry);
+        registerService(channelTypeRegistry, ChannelTypeRegistry.class.getName());
     }
 
     static class TestThingHandlerFactory extends BaseThingHandlerFactory {
@@ -405,9 +404,9 @@ public class ThingUpdateOSGiTest extends JavaOSGiTest {
 
     private class BundleResolverImpl implements BundleResolver {
         @Override
-        public Bundle resolveBundle(@NonNullByDefault({}) Class<?> clazz) {
+        public @Nullable Bundle resolveBundle(@NonNullByDefault({}) Class<?> clazz) {
             // return the test bundle if the class is TestThingHandlerFactory
-            if (clazz != null && clazz.equals(TestThingHandlerFactory.class)) {
+            if (clazz.equals(TestThingHandlerFactory.class)) {
                 return testBundle;
             } else {
                 return FrameworkUtil.getBundle(clazz);

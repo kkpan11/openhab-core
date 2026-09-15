@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -30,7 +30,6 @@ public class ChannelGroupUID extends UID {
      * class by reflection. Not intended to be used for normal instantiation.
      */
     ChannelGroupUID() {
-        super();
     }
 
     /**
@@ -41,6 +40,7 @@ public class ChannelGroupUID extends UID {
      */
     public ChannelGroupUID(String channelGroupUid) {
         super(channelGroupUid);
+        validateThingUID();
     }
 
     /**
@@ -49,6 +49,15 @@ public class ChannelGroupUID extends UID {
      */
     public ChannelGroupUID(ThingUID thingUID, String id) {
         super(toSegments(thingUID, id));
+    }
+
+    void validateThingUID() {
+        try {
+            getThingUID();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("ChannelGroupUID contains an invalid ThingUID part: " + e.getMessage(),
+                    e);
+        }
     }
 
     private static List<String> toSegments(ThingUID thingUID, String id) {
@@ -64,7 +73,7 @@ public class ChannelGroupUID extends UID {
      */
     public String getId() {
         List<String> segments = getAllSegments();
-        return segments.get(segments.size() - 1);
+        return segments.getLast();
     }
 
     @Override

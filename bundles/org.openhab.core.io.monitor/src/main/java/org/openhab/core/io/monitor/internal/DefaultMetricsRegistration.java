@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -91,7 +91,6 @@ public class DefaultMetricsRegistration implements ReadyService.ReadyTracker, Me
         meters.add(new ThingStateMetric(bundleContext, thingRegistry, tags));
         meters.add(new EventCountMetric(bundleContext, tags));
         meters.add(new RuleMetric(bundleContext, tags, ruleRegistry));
-        meters.add(new ThreadPoolMetric(tags));
 
         meters.forEach(m -> m.bindTo(registry));
     }

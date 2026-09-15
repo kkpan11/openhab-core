@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -30,7 +30,6 @@ public class ActionBuilder extends ModuleBuilder<ActionBuilder, Action> {
     private @Nullable Map<String, String> inputs;
 
     protected ActionBuilder() {
-        super();
     }
 
     protected ActionBuilder(final Action action) {

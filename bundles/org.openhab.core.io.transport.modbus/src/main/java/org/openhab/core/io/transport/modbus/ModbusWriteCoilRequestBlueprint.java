@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -58,7 +58,6 @@ public class ModbusWriteCoilRequestBlueprint extends ModbusWriteRequestBlueprint
      */
     public ModbusWriteCoilRequestBlueprint(int slaveId, int reference, BitArray data, boolean writeMultiple,
             int maxTries) {
-        super();
         this.slaveId = slaveId;
         this.reference = reference;
         this.bits = data;

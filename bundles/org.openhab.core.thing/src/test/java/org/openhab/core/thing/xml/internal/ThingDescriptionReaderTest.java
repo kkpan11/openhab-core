@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -58,14 +58,19 @@ public class ThingDescriptionReaderTest {
 
         assertThat(thingTypeXmlResults.size(), is(1));
 
-        ThingTypeXmlResult thingTypeXmlResult = thingTypeXmlResults.get(0);
+        ThingTypeXmlResult thingTypeXmlResult = thingTypeXmlResults.getFirst();
         assertThat(thingTypeXmlResult.getUID().toString(), is("hue:lamp"));
         assertThat(thingTypeXmlResult.label, is("HUE Lamp"));
         assertThat(thingTypeXmlResult.description, is("My own great HUE Lamp."));
+        assertThat(thingTypeXmlResult.semanticEquipmentTag, is("LightBulb"));
+        List<String> supportedBridgeTypeUIDs = thingTypeXmlResult.getBuilder().build().getSupportedBridgeTypeUIDs();
+        assertThat(supportedBridgeTypeUIDs.size(), is(2));
+        assertTrue(supportedBridgeTypeUIDs.contains("hue:bridge"));
+        assertTrue(supportedBridgeTypeUIDs.contains("mqtt:broker"));
 
         assertThat(channelGroupTypeXmlResults.size(), is(1));
 
-        ChannelGroupTypeXmlResult channelGroupTypeXmlResult = channelGroupTypeXmlResults.get(0);
+        ChannelGroupTypeXmlResult channelGroupTypeXmlResult = channelGroupTypeXmlResults.getFirst();
         ChannelGroupType channelGroupType = channelGroupTypeXmlResult.toChannelGroupType();
         assertThat(channelGroupTypeXmlResult.getUID().toString(), is("hue:alarm_system"));
         assertThat(channelGroupType.getLabel(), is("Alarm System"));
@@ -73,7 +78,7 @@ public class ThingDescriptionReaderTest {
 
         assertThat(channelTypeXmlResults.size(), is(5));
 
-        ChannelType channelType = channelTypeXmlResults.get(0).toChannelType();
+        ChannelType channelType = channelTypeXmlResults.getFirst().toChannelType();
         assertThat(channelType.getUID().toString(), is("hue:color"));
         assertThat(channelType.getKind(), is(ChannelKind.STATE));
         assertThat(channelType.isAdvanced(), is(false));

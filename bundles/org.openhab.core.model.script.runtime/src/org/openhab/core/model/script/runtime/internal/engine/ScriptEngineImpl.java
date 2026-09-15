@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.common.util.URI;
@@ -37,7 +38,6 @@ import org.openhab.core.model.script.ScriptServiceUtil;
 import org.openhab.core.model.script.ScriptStandaloneSetup;
 import org.openhab.core.model.script.engine.Script;
 import org.openhab.core.model.script.engine.ScriptEngine;
-import org.openhab.core.model.script.engine.ScriptExecutionException;
 import org.openhab.core.model.script.engine.ScriptParsingException;
 import org.openhab.core.model.script.runtime.ScriptRuntime;
 import org.osgi.service.component.annotations.Activate;
@@ -117,11 +117,6 @@ public class ScriptEngineImpl implements ScriptEngine, ModelParser {
         return script;
     }
 
-    @Override
-    public Object executeScript(String scriptAsString) throws ScriptParsingException, ScriptExecutionException {
-        return newScriptFromString(scriptAsString).execute();
-    }
-
     private XExpression parseScriptIntoXTextEObject(String scriptAsString) throws ScriptParsingException {
         XtextResourceSet resourceSet = getResourceSet();
         Resource resource = resourceSet.createResource(computeUnusedUri(resourceSet)); // IS-A XtextResource
@@ -143,9 +138,9 @@ public class ScriptEngineImpl implements ScriptEngine, ModelParser {
 
         EList<EObject> contents = resource.getContents();
         if (!contents.isEmpty()) {
-            Iterable<Issue> validationErrors = getValidationErrors(contents.get(0));
+            Iterable<Issue> validationErrors = getValidationErrors(contents.getFirst());
             if (!validationErrors.iterator().hasNext()) {
-                return (XExpression) contents.get(0);
+                return (XExpression) contents.getFirst();
             } else {
                 deleteResource(resource);
                 throw new ScriptParsingException("Failed to parse expression (due to managed ValidationError/s)",
@@ -162,7 +157,8 @@ public class ScriptEngineImpl implements ScriptEngine, ModelParser {
         final int MAX_TRIES = 1000;
         for (int i = 0; i < MAX_TRIES; i++) {
             // NOTE: The "filename extension" (".script") must match the file.extensions in the *.mwe2
-            URI syntheticUri = URI.createURI(name + Math.random() + "." + Script.SCRIPT_FILEEXT);
+            URI syntheticUri = URI
+                    .createURI(name + ThreadLocalRandom.current().nextDouble() + "." + Script.SCRIPT_FILEEXT);
             if (resourceSet.getResource(syntheticUri, false) == null) {
                 return syntheticUri;
             }

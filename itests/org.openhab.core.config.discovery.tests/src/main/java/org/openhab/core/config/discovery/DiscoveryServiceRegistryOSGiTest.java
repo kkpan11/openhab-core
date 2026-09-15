@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,9 +15,9 @@ package org.openhab.core.config.discovery;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -160,17 +160,19 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
 
     @Test
     public void testStartScanNonExisting() {
-        assertFalse(discoveryServiceRegistry.startScan(new ThingTypeUID("bindingId", "thingType"), null));
+        assertFalse(discoveryServiceRegistry.startScan(new ThingTypeUID("bindingId", "thingType"), null, null));
     }
 
     @Test
     public void testStartScanExisting() {
-        assertTrue(discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null));
+        assertTrue(
+                discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null, null));
     }
 
     @Test
     public void testScanFaulty() {
-        assertFalse(discoveryServiceRegistry.startScan(new ThingTypeUID(FAULTY_BINDING_ID, FAULTY_THING_TYPE), null));
+        assertFalse(
+                discoveryServiceRegistry.startScan(new ThingTypeUID(FAULTY_BINDING_ID, FAULTY_THING_TYPE), null, null));
     }
 
     @Test
@@ -182,7 +184,7 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
     public void testAbortScanKnown() {
         ScanListener mockScanListener = mock(ScanListener.class);
 
-        assertTrue(discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1),
+        assertTrue(discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null,
                 mockScanListener));
         assertTrue(discoveryServiceRegistry.abortScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1)));
 
@@ -195,7 +197,9 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
         ScanListener mockScanListener = mock(ScanListener.class);
 
         discoveryServiceRegistry.addDiscoveryListener(discoveryListenerMock);
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), mockScanListener);
+        reset(discoveryListenerMock); // Reset mock to ignore cached result replays
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null,
+                mockScanListener);
 
         waitForAssert(() -> verify(mockScanListener, times(1)).onFinished());
         verify(discoveryListenerMock, times(1)).thingDiscovered(any(), any());
@@ -206,11 +210,12 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
     @Test
     public void testRemoveOlderResults() {
         discoveryServiceRegistry.addDiscoveryListener(discoveryListenerMock);
+        reset(discoveryListenerMock); // Reset mock to ignore cached result replays
         discoveryServiceMockForBinding1.removeOlderResults(discoveryServiceMockForBinding1.getTimestampOfLastScan());
 
         waitForAssert(() -> {
-            verify(discoveryListenerMock, times(1)).removeOlderResults(any(DiscoveryService.class), anyLong(), any(),
-                    any());
+            verify(discoveryListenerMock, times(1)).removeOlderResults(any(DiscoveryService.class), any(Instant.class),
+                    any(), any());
         });
         verifyNoMoreInteractions(discoveryListenerMock);
     }
@@ -221,8 +226,11 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
         ScanListener mockScanListener2 = mock(ScanListener.class);
 
         discoveryServiceRegistry.addDiscoveryListener(discoveryListenerMock);
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), mockScanListener1);
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_2, ANY_THING_TYPE_2), mockScanListener2);
+        reset(discoveryListenerMock); // Reset mock to ignore cached result replays
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null,
+                mockScanListener1);
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_2, ANY_THING_TYPE_2), null,
+                mockScanListener2);
 
         waitForAssert(() -> verify(mockScanListener1, times(1)).onFinished());
         waitForAssert(() -> verify(mockScanListener2, times(1)).onFinished());
@@ -234,7 +242,8 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
         assertThat(inbox.getAll().size(), is(2));
 
         // start discovery again
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), mockScanListener1);
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null,
+                mockScanListener1);
         waitForAssert(() -> verify(mockScanListener1, times(2)).onFinished());
         verify(discoveryListenerMock, times(3)).thingDiscovered(any(), any());
 
@@ -250,10 +259,12 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
         ScanListener mockScanListener1 = mock(ScanListener.class);
 
         discoveryServiceRegistry.addDiscoveryListener(discoveryListenerMock);
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), mockScanListener1);
+        reset(discoveryListenerMock); // Reset mock to ignore cached result replays
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null,
+                mockScanListener1);
 
         waitForAssert(() -> verify(mockScanListener1, times(1)).onFinished());
-        verify(discoveryListenerMock, times(1)).thingDiscovered(any(), any());
+        verify(discoveryListenerMock, timeout(2000).times(1)).thingDiscovered(any(), any());
 
         assertThat(inbox.getAll().size(), is(1));
 
@@ -264,9 +275,10 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
                 anotherDiscoveryServiceMockForBinding1, null));
 
         // start discovery again
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), mockScanListener1);
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null,
+                mockScanListener1);
         waitForAssert(() -> verify(mockScanListener1, times(2)).onFinished());
-        verify(discoveryListenerMock, times(3)).thingDiscovered(any(), any());
+        verify(discoveryListenerMock, timeout(2000).times(3)).thingDiscovered(any(), any());
 
         assertThat(inbox.getAll().size(), is(3));
 
@@ -288,10 +300,11 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
         ScanListener mockScanListener1 = mock(ScanListener.class);
 
         discoveryServiceRegistry.addDiscoveryListener(discoveryListenerMock);
-        discoveryServiceRegistry.startScan(ANY_BINDING_ID_3_ANY_THING_TYPE_3_UID, mockScanListener1);
+        reset(discoveryListenerMock); // Reset mock to ignore cached result replays
+        discoveryServiceRegistry.startScan(ANY_BINDING_ID_3_ANY_THING_TYPE_3_UID, null, mockScanListener1);
 
         waitForAssert(() -> verify(mockScanListener1, times(1)).onFinished());
-        verify(discoveryListenerMock, times(2)).thingDiscovered(any(), any());
+        verify(discoveryListenerMock, timeout(2000).times(2)).thingDiscovered(any(), any());
 
         // 2 discovery services for the same thing type with different bridges - inbox must contain 2 elements
         assertThat(inbox.getAll().size(), is(2));
@@ -311,10 +324,11 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
         assertThat(inbox.getAll().size(), is(2));
 
         // start discovery again
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_3, ANY_THING_TYPE_3), mockScanListener1);
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_3, ANY_THING_TYPE_3), null,
+                mockScanListener1);
 
         waitForAssert(() -> verify(mockScanListener1, times(1)).onFinished());
-        verify(discoveryListenerMock, times(4)).thingDiscovered(any(), any());
+        verify(discoveryListenerMock, timeout(2000).times(4)).thingDiscovered(any(), any());
 
         // 2 discovery services for the same thing type with different bridges - inbox must now contain 4 elements
         assertThat(inbox.getAll().size(), is(4));
@@ -343,7 +357,8 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
         ScanListener mockScanListener1 = mock(ScanListener.class);
         discoveryServiceRegistry.addDiscoveryListener(discoveryListenerMock);
         discoveryServiceRegistry.removeDiscoveryListener(discoveryListenerMock);
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), mockScanListener1);
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null,
+                mockScanListener1);
 
         waitForAssert(() -> verify(mockScanListener1, times(1)).onFinished());
         verifyNoMoreInteractions(discoveryListenerMock);
@@ -357,16 +372,18 @@ public class DiscoveryServiceRegistryOSGiTest extends JavaOSGiTest {
         serviceRegs.add(
                 bundleContext.registerService(DiscoveryService.class.getName(), anotherDiscoveryServiceMock, null));
         discoveryServiceRegistry.addDiscoveryListener(discoveryListenerMock);
-        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), mockScanListener1);
+        reset(discoveryListenerMock); // Reset mock to ignore cached result replays
+        discoveryServiceRegistry.startScan(new ThingTypeUID(ANY_BINDING_ID_1, ANY_THING_TYPE_1), null,
+                mockScanListener1);
 
         waitForAssert(mockScanListener1::onFinished);
-        verify(discoveryListenerMock, times(2)).thingDiscovered(any(), any());
+        verify(discoveryListenerMock, timeout(2000).times(2)).thingDiscovered(any(), any());
     }
 
     @Test
     public void testStartScanBindingId() {
         ScanListener mockScanListener1 = mock(ScanListener.class);
-        discoveryServiceRegistry.startScan(ANY_BINDING_ID_1, mockScanListener1);
+        discoveryServiceRegistry.startScan(ANY_BINDING_ID_1, null, mockScanListener1);
 
         waitForAssert(() -> verify(mockScanListener1, times(1)).onFinished());
     }

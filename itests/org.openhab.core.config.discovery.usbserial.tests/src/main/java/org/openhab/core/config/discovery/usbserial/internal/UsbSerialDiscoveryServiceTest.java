@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,7 +16,6 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.collection.IsEmptyCollection.empty;
 import static org.hamcrest.collection.IsIterableContainingInAnyOrder.containsInAnyOrder;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.openhab.core.config.discovery.DiscoveryService.CONFIG_PROPERTY_BACKGROUND_DISCOVERY;
 
@@ -142,7 +141,8 @@ public class UsbSerialDiscoveryServiceTest extends JavaOSGiTest {
         when(discoveryParticipantA.createResult(deviceInfoA)).thenReturn(discoveryResultA);
         usbSerialDiscoveryService.usbSerialDeviceDiscovered(deviceInfoA);
         ArgumentCaptor<DiscoveryResult> captor = ArgumentCaptor.forClass(DiscoveryResult.class);
-        verify(discoveryListener, times(1)).thingDiscovered(eq(usbSerialDiscoveryService), captor.capture());
+        verify(discoveryListener, timeout(2000).times(1)).thingDiscovered(eq(usbSerialDiscoveryService),
+                captor.capture());
         DiscoveryResult actualDiscoveryResultA = captor.getValue();
         assertThat(actualDiscoveryResultA.getProperties(),
                 is(createUsbPropertiesMap(discoveryResultA.getProperties(), deviceInfoA)));
@@ -155,7 +155,8 @@ public class UsbSerialDiscoveryServiceTest extends JavaOSGiTest {
         when(discoveryResultB.getTimeToLive()).thenReturn(10L);
         when(discoveryParticipantB.createResult(deviceInfoB)).thenReturn(discoveryResultB);
         usbSerialDiscoveryService.usbSerialDeviceDiscovered(deviceInfoB);
-        verify(discoveryListener, times(1)).thingDiscovered(eq(usbSerialDiscoveryService), captor.capture());
+        verify(discoveryListener, timeout(2000).times(1)).thingDiscovered(eq(usbSerialDiscoveryService),
+                captor.capture());
         DiscoveryResult actualDiscoveryResultB = captor.getValue();
         assertThat(actualDiscoveryResultB.getProperties(),
                 is(createUsbPropertiesMap(discoveryResultB.getProperties(), deviceInfoB)));

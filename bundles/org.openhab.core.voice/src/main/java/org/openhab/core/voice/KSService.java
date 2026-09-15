@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,7 +16,6 @@ import java.util.Locale;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.audio.AudioFormat;
 import org.openhab.core.audio.AudioStream;
 
@@ -27,23 +26,7 @@ import org.openhab.core.audio.AudioStream;
  * @author Kai Kreuzer - Refactored to use AudioStream
  */
 @NonNullByDefault
-public interface KSService {
-
-    /**
-     * Returns a simple string that uniquely identifies this service
-     *
-     * @return an id that identifies this service
-     */
-    String getId();
-
-    /**
-     * Returns a localized human readable label that can be used within UIs.
-     *
-     * @param locale the locale to provide the label for
-     * @return a localized string to be used in UIs
-     */
-    String getLabel(@Nullable Locale locale);
-
+public interface KSService extends DTService {
     /**
      * Obtain the Locales available from this KSService
      *

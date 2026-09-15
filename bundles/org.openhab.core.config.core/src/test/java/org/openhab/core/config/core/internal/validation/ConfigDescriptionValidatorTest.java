@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,8 +14,10 @@ package org.openhab.core.config.core.internal.validation;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -268,7 +270,7 @@ public class ConfigDescriptionValidatorTest {
         params.put(DECIMAL_REQUIRED_PARAM_NAME, null);
         ConfigValidationException exception = Assertions.assertThrows(ConfigValidationException.class,
                 () -> configDescriptionValidator.validate(params, CONFIG_DESCRIPTION_URI));
-        assertThat(getConfigValidationMessages(exception), is(expected));
+        assertThat(getConfigValidationMessages(exception), containsInAnyOrder(expected.toArray()));
     }
 
     void assertMissingRequired(String parameterName) {
@@ -352,7 +354,7 @@ public class ConfigDescriptionValidatorTest {
         params.put(DECIMAL_MAX_PARAM_NAME, DECIMAL_MAX_VIOLATED);
         ConfigValidationException exception = Assertions.assertThrows(ConfigValidationException.class,
                 () -> configDescriptionValidator.validate(params, CONFIG_DESCRIPTION_URI));
-        assertThat(getConfigValidationMessages(exception), is(expected));
+        assertThat(getConfigValidationMessages(exception), containsInAnyOrder(expected.toArray()));
     }
 
     void assertMinMax(String parameterName, Object value, MessageKey msgKey, String minMax) {
@@ -405,7 +407,7 @@ public class ConfigDescriptionValidatorTest {
         params.put(DECIMAL_PARAM_NAME, INVALID);
         ConfigValidationException exception = Assertions.assertThrows(ConfigValidationException.class,
                 () -> configDescriptionValidator.validate(params, CONFIG_DESCRIPTION_URI));
-        assertThat(getConfigValidationMessages(exception), is(expected));
+        assertThat(getConfigValidationMessages(exception), containsInAnyOrder(expected.toArray()));
     }
 
     void assertType(String parameterName, Type type) {
@@ -513,7 +515,7 @@ public class ConfigDescriptionValidatorTest {
         params.put(DECIMAL_MAX_PARAM_NAME, DECIMAL_MAX_VIOLATED);
         ConfigValidationException exception = Assertions.assertThrows(ConfigValidationException.class,
                 () -> configDescriptionValidator.validate(params, CONFIG_DESCRIPTION_URI));
-        assertThat(getConfigValidationMessages(exception), is(expected));
+        assertThat(getConfigValidationMessages(exception), containsInAnyOrder(expected.toArray()));
     }
 
     @Test

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -88,7 +89,7 @@ public abstract class AbstractScriptFileWatcher implements WatchService.WatchEve
     private final Path watchPath;
     private final boolean watchSubDirectories;
 
-    protected ScheduledExecutorService scheduler;
+    protected final ScheduledExecutorService scheduler;
 
     private final Map<String, ScriptFileReference> scriptMap = new ConcurrentHashMap<>();
     private final Map<String, Lock> scriptLockMap = new ConcurrentHashMap<>();
@@ -218,13 +219,12 @@ public abstract class AbstractScriptFileWatcher implements WatchService.WatchEve
     }
 
     @Override
-    public void processWatchEvent(WatchService.Kind kind, Path path) {
+    public void processWatchEvent(WatchService.Kind kind, Path fullPath) {
         if (!initialized.isDone()) {
             // discard events if the initial import has not finished
             return;
         }
 
-        Path fullPath = watchPath.resolve(path);
         File file = fullPath.toFile();
 
         // Subdirectory events are filtered out by WatchService, so we only need to deal with files
@@ -244,7 +244,8 @@ public abstract class AbstractScriptFileWatcher implements WatchService.WatchEve
     }
 
     private CompletableFuture<Void> addScriptFileReference(ScriptFileReference newRef) {
-        ScriptFileReference ref = scriptMap.computeIfAbsent(newRef.getScriptIdentifier(), k -> newRef);
+        ScriptFileReference ref = Objects
+                .requireNonNull(scriptMap.computeIfAbsent(newRef.getScriptIdentifier(), k -> newRef));
         // check if we are ready to load the script, otherwise we don't need to queue it
         if (currentStartLevel >= ref.getStartLevel() && !ref.getQueueStatus().getAndSet(true)) {
             return importFileWhenReady(ref.getScriptIdentifier());
@@ -270,6 +271,9 @@ public abstract class AbstractScriptFileWatcher implements WatchService.WatchEve
 
                     return null;
                 });
+            } catch (Throwable t) {
+                logger.error("Exception occurred while unloading script '{}'", scriptIdentifier, t);
+                throw t; // Re-throw to propagate it to the CompletableFuture
             } finally {
                 if (scriptMap.containsKey(scriptIdentifier)) {
                     logger.warn("Failed to unload script '{}'", scriptIdentifier);
@@ -281,8 +285,8 @@ public abstract class AbstractScriptFileWatcher implements WatchService.WatchEve
         }, scheduler);
     }
 
-    private synchronized Lock getLockForScript(String scriptIdentifier) {
-        Lock lock = scriptLockMap.computeIfAbsent(scriptIdentifier, k -> new ReentrantLock());
+    private Lock getLockForScript(String scriptIdentifier) {
+        Lock lock = Objects.requireNonNull(scriptLockMap.computeIfAbsent(scriptIdentifier, k -> new ReentrantLock()));
         lock.lock();
 
         return lock;
@@ -357,12 +361,13 @@ public abstract class AbstractScriptFileWatcher implements WatchService.WatchEve
     @Override
     public synchronized void onReadyMarkerAdded(ReadyMarker readyMarker) {
         int previousLevel = currentStartLevel;
-        currentStartLevel = Integer.parseInt(readyMarker.getIdentifier());
+        int curStartLevel = Integer.parseInt(readyMarker.getIdentifier());
+        currentStartLevel = curStartLevel;
 
         logger.trace("Added ready marker {}: start level changed from {} to {}. watchPath: {}", readyMarker,
-                previousLevel, currentStartLevel, watchPath);
+                previousLevel, curStartLevel, watchPath);
 
-        if (currentStartLevel < StartLevelService.STARTLEVEL_STATES) {
+        if (curStartLevel < StartLevelService.STARTLEVEL_STATES) {
             // ignore start level less than 30
             return;
         }
@@ -371,7 +376,7 @@ public abstract class AbstractScriptFileWatcher implements WatchService.WatchEve
             addFiles(listFiles(watchPath, watchSubDirectories)).thenRun(() -> initialized.complete(null));
         } else {
             scriptMap.values().stream().sorted()
-                    .filter(ref -> needsStartLevelProcessing(ref, previousLevel, currentStartLevel))
+                    .filter(ref -> needsStartLevelProcessing(ref, previousLevel, curStartLevel))
                     .forEach(ref -> importFileWhenReady(ref.getScriptIdentifier()));
         }
     }

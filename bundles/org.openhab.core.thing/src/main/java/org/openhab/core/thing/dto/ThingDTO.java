@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,6 +15,8 @@ package org.openhab.core.thing.dto;
 import java.util.List;
 import java.util.Map;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * This is a data transfer object that is used to serialize things.
  *
@@ -23,17 +25,21 @@ import java.util.Map;
  * @author Stefan Bußweiler - Added new thing status handling
  * @author Simon Kaufmann - Added label
  * @author Wouter Born - Let (Enriched)ThingDTO extend AbstractThingDTO so both can define their own "channels" type
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
+@Schema(name = "Thing")
 public class ThingDTO extends AbstractThingDTO {
 
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     public List<ChannelDTO> channels;
 
     public ThingDTO() {
     }
 
     protected ThingDTO(String thingTypeUID, String uid, String label, String bridgeUID, List<ChannelDTO> channels,
-            Map<String, Object> configuration, Map<String, String> properties, String location) {
-        super(thingTypeUID, uid, label, bridgeUID, configuration, properties, location);
+            Map<String, Object> configuration, Map<String, String> properties, String location,
+            String semanticEquipmentTag) {
+        super(thingTypeUID, uid, label, bridgeUID, configuration, properties, location, semanticEquipmentTag);
         this.channels = channels;
     }
 }

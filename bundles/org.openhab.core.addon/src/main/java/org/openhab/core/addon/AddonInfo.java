@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -41,6 +41,7 @@ public class AddonInfo implements Identifiable<String> {
     private final String uid;
     private final String name;
     private final String description;
+    private final @Nullable String keywords;
     private final @Nullable String connection;
     private final List<String> countries;
     private final @Nullable String configDescriptionURI;
@@ -48,13 +49,10 @@ public class AddonInfo implements Identifiable<String> {
     private @Nullable String sourceBundle;
     private @Nullable List<AddonDiscoveryMethod> discoveryMethods;
 
-    private boolean masterAddonInfo = true;
-
     private AddonInfo(String id, String type, @Nullable String uid, String name, String description,
-            @Nullable String connection, List<String> countries, @Nullable String configDescriptionURI,
-            @Nullable String serviceId, @Nullable String sourceBundle,
-            @Nullable List<AddonDiscoveryMethod> discoveryMethods, boolean isMasterAddonInfo)
-            throws IllegalArgumentException {
+            @Nullable String keywords, @Nullable String connection, List<String> countries,
+            @Nullable String configDescriptionURI, @Nullable String serviceId, @Nullable String sourceBundle,
+            @Nullable List<AddonDiscoveryMethod> discoveryMethods) throws IllegalArgumentException {
         // mandatory fields
         if (id.isBlank()) {
             throw new IllegalArgumentException("The ID must neither be null nor empty!");
@@ -76,14 +74,13 @@ public class AddonInfo implements Identifiable<String> {
         this.description = description;
 
         // optional fields
+        this.keywords = keywords;
         this.connection = connection;
         this.countries = countries;
         this.configDescriptionURI = configDescriptionURI;
         this.serviceId = Objects.requireNonNullElse(serviceId, type + "." + id);
         this.sourceBundle = sourceBundle;
         this.discoveryMethods = discoveryMethods;
-
-        this.masterAddonInfo = isMasterAddonInfo;
     }
 
     /**
@@ -133,6 +130,15 @@ public class AddonInfo implements Identifiable<String> {
     }
 
     /**
+     * Returns a comma-separated list of keywords related to the add-on. e.g. "bluetooth".
+     *
+     * @return a comma-separated list of keywords, or null if no keywords string available
+     */
+    public @Nullable String getKeywords() {
+        return keywords;
+    }
+
+    /**
      * Returns the link to a concrete {@link org.openhab.core.config.core.ConfigDescription}.
      *
      * @return the link to a concrete ConfigDescription (could be <code>null</code>>)
@@ -158,10 +164,6 @@ public class AddonInfo implements Identifiable<String> {
         return discoveryMethods != null ? discoveryMethods : List.of();
     }
 
-    public boolean isMasterAddonInfo() {
-        return masterAddonInfo;
-    }
-
     public static Builder builder(String id, String type) {
         return new Builder(id, type);
     }
@@ -177,14 +179,13 @@ public class AddonInfo implements Identifiable<String> {
         private @Nullable String uid;
         private String name = "";
         private String description = "";
+        private @Nullable String keywords;
         private @Nullable String connection;
         private List<String> countries = List.of();
         private @Nullable String configDescriptionURI = "";
         private @Nullable String serviceId;
         private @Nullable String sourceBundle;
         private @Nullable List<AddonDiscoveryMethod> discoveryMethods;
-
-        private boolean masterAddonInfo = true;
 
         private Builder(String id, String type) {
             this.id = id;
@@ -197,13 +198,13 @@ public class AddonInfo implements Identifiable<String> {
             this.uid = addonInfo.uid;
             this.name = addonInfo.name;
             this.description = addonInfo.description;
+            this.keywords = addonInfo.keywords;
             this.connection = addonInfo.connection;
             this.countries = addonInfo.countries;
             this.configDescriptionURI = addonInfo.configDescriptionURI;
             this.serviceId = addonInfo.serviceId;
             this.sourceBundle = addonInfo.sourceBundle;
             this.discoveryMethods = addonInfo.discoveryMethods;
-            this.masterAddonInfo = addonInfo.masterAddonInfo;
         }
 
         public Builder withUID(@Nullable String uid) {
@@ -218,6 +219,11 @@ public class AddonInfo implements Identifiable<String> {
 
         public Builder withDescription(String description) {
             this.description = description;
+            return this;
+        }
+
+        public Builder withKeywords(@Nullable String keywords) {
+            this.keywords = keywords;
             return this;
         }
 
@@ -256,11 +262,6 @@ public class AddonInfo implements Identifiable<String> {
             return this;
         }
 
-        public Builder isMasterAddonInfo(boolean masterAddonInfo) {
-            this.masterAddonInfo = masterAddonInfo;
-            return this;
-        }
-
         /**
          * Build an {@link AddonInfo} from this builder
          *
@@ -268,8 +269,8 @@ public class AddonInfo implements Identifiable<String> {
          * @throws IllegalArgumentException if any of the information in this builder is invalid
          */
         public AddonInfo build() throws IllegalArgumentException {
-            return new AddonInfo(id, type, uid, name, description, connection, countries, configDescriptionURI,
-                    serviceId, sourceBundle, discoveryMethods, masterAddonInfo);
+            return new AddonInfo(id, type, uid, name, description, keywords, connection, countries,
+                    configDescriptionURI, serviceId, sourceBundle, discoveryMethods);
         }
     }
 }

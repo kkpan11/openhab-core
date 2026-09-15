@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -165,9 +165,11 @@ public class ModbusSlaveConnectionFactoryImpl
                 if (address == null) {
                     return null;
                 }
-                int connectTimeoutMillis = getEndpointPoolConfiguration(key).getConnectTimeoutMillis();
+                EndpointPoolConfiguration endpointConfig = getEndpointPoolConfiguration(key);
+                int connectTimeoutMillis = endpointConfig.getConnectTimeoutMillis();
                 TCPMasterConnection connection = new TCPMasterConnection(address, key.getPort(), connectTimeoutMillis,
                         key.getRtuEncoded());
+                connection.setTimeout(endpointConfig.getReceiveTimeoutMillis());
                 logger.trace("Created connection {} for endpoint {}", connection, key);
                 return connection;
             }

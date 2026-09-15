@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,7 +21,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Set;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
@@ -39,8 +38,8 @@ import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.persistence.FilterCriteria;
 import org.openhab.core.persistence.FilterCriteria.Ordering;
 import org.openhab.core.persistence.HistoricItem;
-import org.openhab.core.persistence.PersistenceItemInfo;
 import org.openhab.core.persistence.QueryablePersistenceService;
+import org.openhab.core.persistence.extensions.PersistenceExtensions.RiemannType;
 import org.openhab.core.persistence.strategy.PersistenceStrategy;
 import org.openhab.core.types.State;
 
@@ -49,6 +48,8 @@ import org.openhab.core.types.State;
  *
  * @author Kai Kreuzer - Initial contribution
  * @author Mark Herwege - Allow future values
+ * @author Mark Herwege - Adapt test expected value logic for Riemann sums
+ * @author Mark Herwege - use base unit for calculations and results
  */
 @NonNullByDefault
 public class TestPersistenceService implements QueryablePersistenceService {
@@ -71,20 +72,21 @@ public class TestPersistenceService implements QueryablePersistenceService {
     static final int SWITCH_END = +15;
     static final OnOffType SWITCH_STATE = OnOffType.ON;
 
-    static final int BEFORE_START = 1940;
-    static final int HISTORIC_START = 1950;
-    static final int HISTORIC_INTERMEDIATE_VALUE_1 = 2005;
-    static final int HISTORIC_INTERMEDIATE_VALUE_2 = 2011;
-    static final int HISTORIC_END = 2012;
-    static final int HISTORIC_INTERMEDIATE_NOVALUE_3 = 2019;
-    static final int HISTORIC_INTERMEDIATE_NOVALUE_4 = 2021;
-    static final int FUTURE_INTERMEDIATE_NOVALUE_1 = 2051;
-    static final int FUTURE_INTERMEDIATE_NOVALUE_2 = 2056;
-    static final int FUTURE_START = 2060;
-    static final int FUTURE_INTERMEDIATE_VALUE_3 = 2070;
-    static final int FUTURE_INTERMEDIATE_VALUE_4 = 2077;
-    static final int FUTURE_END = 2100;
-    static final int AFTER_END = 2110;
+    static final int BASE_VALUE = ZonedDateTime.now().getYear(); // For reference, if year is 2025
+    static final int BEFORE_START = BASE_VALUE - 85; // 1940
+    static final int HISTORIC_START = BASE_VALUE - 75; // 1950
+    static final int HISTORIC_INTERMEDIATE_VALUE_1 = BASE_VALUE - 20; // 2005
+    static final int HISTORIC_INTERMEDIATE_VALUE_2 = BASE_VALUE - 14; // 2011
+    static final int HISTORIC_END = BASE_VALUE - 13; // 2012
+    static final int HISTORIC_INTERMEDIATE_NOVALUE_3 = BASE_VALUE - 6; // 2019
+    static final int HISTORIC_INTERMEDIATE_NOVALUE_4 = BASE_VALUE - 4; // 2021
+    static final int FUTURE_INTERMEDIATE_NOVALUE_1 = BASE_VALUE + 21; // 2051
+    static final int FUTURE_INTERMEDIATE_NOVALUE_2 = BASE_VALUE + 31; // 2056
+    static final int FUTURE_START = BASE_VALUE + 35; // 2060
+    static final int FUTURE_INTERMEDIATE_VALUE_3 = BASE_VALUE + 45; // 2070
+    static final int FUTURE_INTERMEDIATE_VALUE_4 = BASE_VALUE + 52; // 2077
+    static final int FUTURE_END = BASE_VALUE + 75; // 2100
+    static final int AFTER_END = BASE_VALUE + 85; // 2110
     static final DecimalType STATE = new DecimalType(HISTORIC_END);
 
     private final ItemRegistry itemRegistry;
@@ -176,6 +178,7 @@ public class TestPersistenceService implements QueryablePersistenceService {
                 }
                 final int year = i;
                 results.add(new HistoricItem() {
+
                     @Override
                     public ZonedDateTime getTimestamp() {
                         return ZonedDateTime.of(year, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
@@ -201,6 +204,7 @@ public class TestPersistenceService implements QueryablePersistenceService {
             if (filter.getOrdering() == Ordering.DESCENDING) {
                 Collections.reverse(results);
             }
+
             Stream<HistoricItem> stream = results.stream();
             if (filter.getPageNumber() > 0) {
                 stream = stream.skip(filter.getPageSize() * filter.getPageNumber());
@@ -214,17 +218,12 @@ public class TestPersistenceService implements QueryablePersistenceService {
     }
 
     @Override
-    public Set<PersistenceItemInfo> getItemInfo() {
-        return Set.of();
-    }
-
-    @Override
     public String getLabel(@Nullable Locale locale) {
         return "Test Label";
     }
 
     @Override
-    public List<PersistenceStrategy> getDefaultStrategies() {
+    public List<PersistenceStrategy> getSuggestedStrategies() {
         return List.of();
     }
 
@@ -247,7 +246,145 @@ public class TestPersistenceService implements QueryablePersistenceService {
         }
     }
 
-    static double average(@Nullable Integer beginYear, @Nullable Integer endYear) {
+    static double testRiemannSum(@Nullable Integer beginYear, @Nullable Integer endYear, RiemannType type) {
+        ZonedDateTime now = ZonedDateTime.now();
+        int begin = beginYear != null ? (beginYear < HISTORIC_START ? HISTORIC_START : beginYear) : now.getYear() + 1;
+        int end = endYear != null ? endYear : now.getYear();
+        double sum = 0;
+        int index = begin;
+        long duration = 0;
+        long nextDuration = 0;
+        switch (type) {
+            case LEFT:
+                if (beginYear == null) {
+                    duration = Duration
+                            .between(now, ZonedDateTime.of(now.getYear() + 1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                }
+                while (index < end) {
+                    int bucketStart = index;
+                    double value = value(index).doubleValue();
+                    while ((index < end - 1) && (value(index).longValue() == value(index + 1).longValue())) {
+                        index++;
+                    }
+                    index++;
+                    duration += Duration
+                            .between(ZonedDateTime.of(bucketStart, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                                    ZonedDateTime.of(index, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                    if (endYear == null && index == end) {
+                        duration += Duration
+                                .between(ZonedDateTime.of(now.getYear(), 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), now)
+                                .toSeconds();
+                    }
+                    sum += value * duration;
+                    duration = 0;
+                }
+                break;
+            case RIGHT:
+                if (beginYear == null) {
+                    duration = Duration
+                            .between(now, ZonedDateTime.of(now.getYear() + 1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                }
+                while (index < end) {
+                    int bucketStart = index;
+                    while ((index < end - 1) && (value(index).longValue() == value(index + 1).longValue())) {
+                        index++;
+                    }
+                    index++;
+                    double value = value(index).doubleValue();
+                    duration += Duration
+                            .between(ZonedDateTime.of(bucketStart, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                                    ZonedDateTime.of(index, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                    if (endYear == null && index == end) {
+                        duration += Duration
+                                .between(ZonedDateTime.of(now.getYear(), 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), now)
+                                .toSeconds();
+                    }
+                    sum += value * duration;
+                    duration = 0;
+                }
+                break;
+            case TRAPEZOIDAL:
+                if (beginYear == null) {
+                    duration = Duration
+                            .between(now, ZonedDateTime.of(now.getYear() + 1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                }
+                while (index < end) {
+                    int bucketStart = index;
+                    double value = value(index).doubleValue();
+                    while ((index < end - 1) && (value(index).longValue() == value(index + 1).longValue())) {
+                        index++;
+                    }
+                    index++;
+                    value = (value + value(index).doubleValue()) / 2.0;
+                    duration += Duration
+                            .between(ZonedDateTime.of(bucketStart, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                                    ZonedDateTime.of(index, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                    if (endYear == null && index == end) {
+                        duration += Duration
+                                .between(ZonedDateTime.of(now.getYear(), 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), now)
+                                .toSeconds();
+                    }
+                    sum += value * duration;
+                    duration = 0;
+                }
+                break;
+            case MIDPOINT:
+                int nextIndex = begin;
+                boolean startBucket = true;
+                double startValue = value(begin).doubleValue();
+                if (beginYear == null) {
+                    duration = Duration.between(now, ZonedDateTime.of(begin, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                }
+                while (index < end - 1 && nextIndex < end) {
+                    int bucketStart = index;
+                    while ((index < end - 1) && (value(index).longValue() == value(index + 1).longValue())) {
+                        index++;
+                    }
+                    index++;
+                    double value = value(index).doubleValue();
+                    duration += Duration
+                            .between(ZonedDateTime.of(bucketStart, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                                    ZonedDateTime.of(index, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                    if (startBucket) {
+                        sum += startValue * duration / 2.0;
+                        startBucket = false;
+                    }
+                    bucketStart = index;
+                    nextIndex = index;
+                    while ((nextIndex < end - 1)
+                            && (value(nextIndex).longValue() == value(nextIndex + 1).longValue())) {
+                        nextIndex++;
+                    }
+                    nextIndex++;
+                    nextDuration = Duration
+                            .between(ZonedDateTime.of(bucketStart, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                                    ZonedDateTime.of(nextIndex, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
+                            .toSeconds();
+                    if (endYear == null && nextIndex == end) {
+                        nextDuration += Duration
+                                .between(ZonedDateTime.of(now.getYear(), 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), now)
+                                .toSeconds();
+                    }
+                    sum += value * (duration + nextDuration) / 2.0;
+                    duration = 0;
+                }
+                double endValue = value(end).doubleValue();
+                long endDuration = nextDuration;
+                sum += endValue * endDuration / 2.0;
+                break;
+        }
+        return sum;
+    }
+
+    static double testAverage(@Nullable Integer beginYear, @Nullable Integer endYear) {
         ZonedDateTime now = ZonedDateTime.now();
         ZonedDateTime beginDate = beginYear != null
                 ? ZonedDateTime.of(beginYear >= HISTORIC_START ? beginYear : HISTORIC_START, 1, 1, 0, 0, 0, 0,
@@ -255,22 +392,12 @@ public class TestPersistenceService implements QueryablePersistenceService {
                 : now;
         ZonedDateTime endDate = endYear != null ? ZonedDateTime.of(endYear, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault())
                 : now;
-        int begin = beginYear != null ? beginYear : now.getYear() + 1;
-        int end = endYear != null ? endYear : now.getYear();
-        long sum = LongStream.range(begin, end).map(y -> value(y).longValue() * Duration
-                .between(ZonedDateTime.of(Long.valueOf(y).intValue(), 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
-                        ZonedDateTime.of(Long.valueOf(y + 1).intValue(), 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()))
-                .toMillis()).sum();
-        sum += beginYear == null ? value(now.getYear()).longValue() * Duration
-                .between(now, ZonedDateTime.of(now.getYear() + 1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault())).toMillis()
-                : 0;
-        sum += endYear == null ? value(now.getYear()).longValue() * Duration
-                .between(ZonedDateTime.of(now.getYear(), 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), now).toMillis() : 0;
-        long duration = Duration.between(beginDate, endDate).toMillis();
+        double sum = testRiemannSum(beginYear, endYear, RiemannType.LEFT);
+        long duration = Duration.between(beginDate, endDate).toSeconds();
         return 1.0 * sum / duration;
     }
 
-    static double median(@Nullable Integer beginYear, @Nullable Integer endYear) {
+    static double testMedian(@Nullable Integer beginYear, @Nullable Integer endYear) {
         ZonedDateTime now = ZonedDateTime.now();
         int begin = beginYear != null ? beginYear : now.getYear() + 1;
         int end = endYear != null ? endYear : now.getYear();

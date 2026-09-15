@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -159,6 +159,23 @@ public abstract class BaseThingHandlerFactory implements ThingHandlerFactory {
             }
             registerThingHandlerService(thingUID, thingHandler, c);
         }
+    }
+
+    /**
+     * Registers a dynamic service for the given thing handler. The service must implement ThingHandlerService.
+     * 
+     * @param thingHandler The thing handler requesting a service to be registered.
+     * @param klass The service class to register.
+     */
+    public void registerService(ThingHandler thingHandler, Class<? extends ThingHandlerService> klass) {
+        ThingUID thingUID = thingHandler.getThing().getUID();
+        if (!ThingHandlerService.class.isAssignableFrom(klass)) {
+            logger.warn(
+                    "Should register service={} for thingUID={}, but it does not implement the interface ThingHandlerService.",
+                    klass.getCanonicalName(), thingUID);
+            return;
+        }
+        registerThingHandlerService(thingUID, thingHandler, klass);
     }
 
     private <T extends ThingHandlerService> void registerThingHandlerService(ThingUID thingUID,

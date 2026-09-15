@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -126,7 +126,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
             if (ttl == DiscoveryResult.TTL_UNLIMITED) {
                 return false;
             }
-            return Instant.ofEpochMilli(result.getTimestamp()).plusSeconds(ttl).isBefore(now);
+            return result.getCreationTime().plusSeconds(ttl).isBefore(now);
         }
     }
 
@@ -192,9 +192,9 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
         if (newThingId != null && newThingId.contains(AbstractUID.SEPARATOR)) {
             throw new IllegalArgumentException("New Thing ID " + newThingId + " must not contain multiple segments");
         }
-        DiscoveryResult result = results.get(0);
+        DiscoveryResult result = results.getFirst();
         final Map<String, String> properties = new HashMap<>();
-        final Map<String, Object> configParams = new HashMap<>();
+        final Map<String, @Nullable Object> configParams = new HashMap<>();
         getPropsAndConfigParams(result, properties, configParams);
         final Configuration config = new Configuration(configParams);
         ThingTypeUID thingTypeUID = result.getThingTypeUID();
@@ -412,20 +412,19 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
     }
 
     @Override
-    public @Nullable Collection<ThingUID> removeOlderResults(DiscoveryService source, long timestamp,
+    public @Nullable Collection<ThingUID> removeOlderResults(DiscoveryService source, Instant timestamp,
             @Nullable Collection<ThingTypeUID> thingTypeUIDs, @Nullable ThingUID bridgeUID) {
         Set<ThingUID> removedThings = new HashSet<>();
         for (DiscoveryResult discoveryResult : getAll()) {
             Class<?> discoverer = resultDiscovererMap.get(discoveryResult);
             if (thingTypeUIDs != null && thingTypeUIDs.contains(discoveryResult.getThingTypeUID())
-                    && discoveryResult.getTimestamp() < timestamp
+                    && discoveryResult.getCreationTime().isBefore(timestamp)
                     && (discoverer == null || source.getClass() == discoverer)) {
                 ThingUID thingUID = discoveryResult.getThingUID();
                 if (bridgeUID == null || bridgeUID.equals(discoveryResult.getBridgeUID())) {
                     removedThings.add(thingUID);
                     remove(thingUID);
-                    logger.debug("Removed thing '{}' from inbox because it was older than {}.", thingUID,
-                            Instant.ofEpochMilli(timestamp));
+                    logger.debug("Removed thing '{}' from inbox because it was older than {}.", thingUID, timestamp);
                 }
             }
         }
@@ -570,7 +569,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
      * @param configParams the location the configuration parameters should be stored to.
      */
     private void getPropsAndConfigParams(final DiscoveryResult discoveryResult, final Map<String, String> props,
-            final Map<String, Object> configParams) {
+            final Map<String, @Nullable Object> configParams) {
         final List<ConfigDescriptionParameter> configDescParams = getConfigDescParams(discoveryResult);
         final Set<String> paramNames = getConfigDescParamNames(configDescParams);
         final Map<String, Object> resultProps = discoveryResult.getProperties();

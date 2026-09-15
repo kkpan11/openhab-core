@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,7 +15,6 @@ package org.openhab.core.automation.module.script.rulesupport.loader;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.fail;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.openhab.core.OpenHAB.CONFIG_DIR_PROG_ARGUMENT;
 import static org.openhab.core.service.WatchService.Kind.*;
@@ -74,7 +73,7 @@ class AbstractScriptFileWatcherTest extends JavaTest {
     private @Mock @NonNullByDefault({}) ReadyService readyServiceMock;
     private @Mock @NonNullByDefault({}) WatchService watchServiceMock;
 
-    protected @NonNullByDefault({}) @TempDir Path tempScriptDir;
+    protected @TempDir @NonNullByDefault({}) Path tempScriptDir;
 
     private final AtomicInteger atomicInteger = new AtomicInteger();
 

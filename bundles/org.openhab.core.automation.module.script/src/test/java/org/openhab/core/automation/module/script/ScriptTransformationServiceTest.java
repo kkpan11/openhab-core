@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,7 +15,6 @@ package org.openhab.core.automation.module.script;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -37,6 +36,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.openhab.core.config.core.ConfigDescriptionRegistry;
+import org.openhab.core.test.java.JavaTest;
 import org.openhab.core.transform.Transformation;
 import org.openhab.core.transform.TransformationException;
 import org.openhab.core.transform.TransformationRegistry;
@@ -49,7 +49,7 @@ import org.openhab.core.transform.TransformationRegistry;
 @NonNullByDefault
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-public class ScriptTransformationServiceTest {
+public class ScriptTransformationServiceTest extends JavaTest {
     private static final String SCRIPT_LANGUAGE = "customDsl";
     private static final String SCRIPT_UID = "scriptUid." + SCRIPT_LANGUAGE;
     private static final String INVALID_SCRIPT_UID = "invalidScriptUid";
@@ -111,7 +111,6 @@ public class ScriptTransformationServiceTest {
         verify(scriptContext).setAttribute(eq("input"), eq("input"), eq(ScriptContext.ENGINE_SCOPE));
         verify(scriptContext).setAttribute(eq("param1"), eq("value1"), eq(ScriptContext.ENGINE_SCOPE));
         verify(scriptContext).setAttribute(eq("param2"), eq("value2"), eq(ScriptContext.ENGINE_SCOPE));
-        verifyNoMoreInteractions(scriptContext);
     }
 
     @Test
@@ -121,7 +120,6 @@ public class ScriptTransformationServiceTest {
         verify(scriptContext).setAttribute(eq("input"), eq("input"), eq(ScriptContext.ENGINE_SCOPE));
         verify(scriptContext).setAttribute(eq("param1"), eq("&amp;"), eq(ScriptContext.ENGINE_SCOPE));
         verify(scriptContext).setAttribute(eq("param2"), eq("=value"), eq(ScriptContext.ENGINE_SCOPE));
-        verifyNoMoreInteractions(scriptContext);
     }
 
     @Test
@@ -140,7 +138,23 @@ public class ScriptTransformationServiceTest {
         inOrder.verify(scriptContext, times(2)).setAttribute(anyString(), anyString(), eq(ScriptContext.ENGINE_SCOPE));
         inOrder.verify((Compilable) scriptEngine).compile(SCRIPT);
         inOrder.verify(scriptEngine).eval(SCRIPT);
-        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    public void scriptAttributesRemovedAfterExecution() throws TransformationException, ScriptException {
+        abstract class CompilableScriptEngine implements ScriptEngine, Compilable {
+        }
+        scriptEngine = mock(CompilableScriptEngine.class);
+
+        when(scriptEngineContainer.getScriptEngine()).thenReturn(scriptEngine);
+        when(scriptEngine.getContext()).thenReturn(scriptContext);
+
+        InOrder inOrder = inOrder(scriptContext, scriptEngine);
+
+        service.transform(SCRIPT_UID + "?param1=value1", "input");
+
+        inOrder.verify(scriptEngine).eval(SCRIPT);
+        inOrder.verify(scriptContext).removeAttribute(eq("param1"), eq(ScriptContext.ENGINE_SCOPE));
     }
 
     @Test
@@ -149,7 +163,7 @@ public class ScriptTransformationServiceTest {
 
         verify(scriptContext).setAttribute(eq("input"), eq("input"), eq(ScriptContext.ENGINE_SCOPE));
         verify(scriptContext).setAttribute(eq("param1"), eq("value1"), eq(ScriptContext.ENGINE_SCOPE));
-        verifyNoMoreInteractions(scriptContext);
+        verify(scriptContext, times(0)).setAttribute(eq("invalid"), any(), eq(ScriptContext.ENGINE_SCOPE));
     }
 
     @Test
@@ -187,6 +201,28 @@ public class ScriptTransformationServiceTest {
         assertThat(e.getMessage(), is("Failed to execute script."));
         assertThat(e.getCause(), instanceOf(ScriptException.class));
         assertThat(e.getCause().getMessage(), is("exception"));
+    }
+
+    @Test
+    public void factoryRemovedOfDifferentScriptTypeDoesNotDisposeEngine() throws TransformationException {
+        service.transform(SCRIPT_UID, "input");
+
+        service.factoryRemoved("differentLanguage");
+        verify(scriptEngineManager, never()).removeEngine(any());
+    }
+
+    @Test
+    public void factoryRemovedOfSameScriptTypeDisposesEngine() throws TransformationException {
+        when(scriptEngineContainer.getIdentifier()).thenReturn("engineId");
+        service.transform(SCRIPT_UID, "input");
+
+        // Engine should be disposed
+        service.factoryRemoved(SCRIPT_LANGUAGE);
+        verify(scriptEngineManager).removeEngine("engineId");
+
+        // Subsequent transform should recreate the engine
+        service.transform(SCRIPT_UID, "input");
+        verify(scriptEngineManager, times(2)).createScriptEngine(eq(SCRIPT_LANGUAGE), any());
     }
 
     @Test

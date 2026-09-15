@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -30,7 +30,7 @@ public enum UnDefType implements PrimitiveType, State {
 
     @Override
     public String format(String pattern) {
-        return String.format(pattern, this.toString());
+        return pattern.formatted(this.toString());
     }
 
     @Override

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,7 +16,8 @@ import static java.util.Map.entry;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -61,6 +62,7 @@ import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.service.ReadyMarker;
 import org.openhab.core.service.StartLevelService;
 import org.openhab.core.test.java.JavaOSGiTest;
+import org.openhab.core.thing.ThingRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -88,9 +90,11 @@ public class RuleEventTest extends JavaOSGiTest {
         when(startLevelService.getStartLevel()).thenReturn(100);
         registerService(startLevelService, StartLevelService.class.getName());
         EventPublisher eventPublisher = Objects.requireNonNull(getService(EventPublisher.class));
+        ThingRegistry thingRegistry = Objects.requireNonNull(getService(ThingRegistry.class));
         ItemRegistry itemRegistry = Objects.requireNonNull(getService(ItemRegistry.class));
         CoreModuleHandlerFactory coreModuleHandlerFactory = new CoreModuleHandlerFactory(getBundleContext(),
-                eventPublisher, itemRegistry, mock(TimeZoneProvider.class), mock(StartLevelService.class));
+                eventPublisher, thingRegistry, itemRegistry, mock(TimeZoneProvider.class),
+                mock(StartLevelService.class));
         mock(CoreModuleHandlerFactory.class);
         registerService(coreModuleHandlerFactory);
 

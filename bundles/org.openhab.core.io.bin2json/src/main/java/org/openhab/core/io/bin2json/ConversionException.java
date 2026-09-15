@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,8 @@
  */
 package org.openhab.core.io.bin2json;
 
+import java.io.Serial;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
@@ -22,20 +24,39 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 @NonNullByDefault
 public class ConversionException extends Exception {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
+    /**
+     * Constructs a new ConversionException with no detail message.
+     */
     public ConversionException() {
-        super();
     }
 
+    /**
+     * Constructs a new ConversionException with the specified detail message.
+     *
+     * @param message the detail message describing the conversion error
+     */
     public ConversionException(String message) {
         super(message);
     }
 
+    /**
+     * Constructs a new ConversionException with the specified detail message and cause.
+     *
+     * @param message the detail message describing the conversion error
+     * @param cause the underlying cause of the conversion error
+     */
     public ConversionException(String message, Throwable cause) {
         super(message, cause);
     }
 
+    /**
+     * Constructs a new ConversionException with the specified cause.
+     *
+     * @param cause the underlying cause of the conversion error
+     */
     public ConversionException(Throwable cause) {
         super(cause);
     }

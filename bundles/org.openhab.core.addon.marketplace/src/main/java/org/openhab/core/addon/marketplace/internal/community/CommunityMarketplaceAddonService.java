@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -27,7 +27,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -127,7 +126,6 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
             this.showUnpublished = ConfigParser.valueAsOrElse(config.get(CONFIG_SHOW_UNPUBLISHED_ENTRIES_KEY),
                     Boolean.class, false);
             this.enabled = ConfigParser.valueAsOrElse(config.get(CONFIG_ENABLED_KEY), Boolean.class, true);
-            cachedRemoteAddons.invalidateValue();
             refreshSource();
         }
     }
@@ -163,7 +161,7 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
         try {
             List<DiscourseCategoryResponseDTO> pages = new ArrayList<>();
 
-            URL url = new URL(COMMUNITY_MARKETPLACE_URL);
+            URL url = URI.create(COMMUNITY_MARKETPLACE_URL).toURL();
             int pageNb = 1;
             while (url != null) {
                 URLConnection connection = url.openConnection();
@@ -180,7 +178,7 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
 
                     if (parsed.topicList.moreTopicsUrl != null) {
                         // Discourse URL for next page is wrong
-                        url = new URL(COMMUNITY_MARKETPLACE_URL + "?page=" + pageNb++);
+                        url = URI.create(COMMUNITY_MARKETPLACE_URL + "?page=" + pageNb++).toURL();
                     } else {
                         url = null;
                     }
@@ -188,8 +186,8 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
             }
 
             List<DiscourseUser> users = pages.stream().flatMap(p -> Stream.of(p.users)).toList();
-            pages.stream().flatMap(p -> Stream.of(p.topicList.topics))
-                    .filter(t -> showUnpublished || List.of(t.tags).contains(PUBLISHED_TAG))
+            pages.stream().flatMap(p -> Stream.of(p.topicList.topics)).filter(t -> showUnpublished
+                    || (t.tags != null && Arrays.stream(t.tags).anyMatch(tag -> PUBLISHED_TAG.equals(tag.name))))
                     .map(t -> Optional.ofNullable(convertTopicItemToAddon(t, users)))
                     .forEach(a -> a.ifPresent(addons::add));
         } catch (Exception e) {
@@ -205,7 +203,7 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
         // check if it is an installed add-on (cachedAddons also contains possibly incomplete results from the remote
         // side, we need to retrieve them from Discourse)
 
-        if (installedAddons.contains(queryId)) {
+        if (installedAddonIds.contains(queryId)) {
             return cachedAddons.stream().filter(e -> queryId.equals(e.getUid())).findAny().orElse(null);
         }
 
@@ -215,7 +213,7 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
 
         // retrieve from remote
         try {
-            URL url = new URL(String.format("%s%s", COMMUNITY_TOPIC_URL, uid.replace(ADDON_ID_PREFIX, "")));
+            URL url = URI.create(COMMUNITY_TOPIC_URL + uid.replace(ADDON_ID_PREFIX, "")).toURL();
             URLConnection connection = url.openConnection();
             connection.addRequestProperty("Accept", "application/json");
             if (this.apiKey != null) {
@@ -290,7 +288,7 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
      */
     private @Nullable Addon convertTopicItemToAddon(DiscourseTopicItem topic, List<DiscourseUser> users) {
         try {
-            List<String> tags = Arrays.asList(Objects.requireNonNullElse(topic.tags, new String[0]));
+            List<String> tags = topic.tags == null ? List.of() : Arrays.stream(topic.tags).map(t -> t.name).toList();
 
             String uid = ADDON_ID_PREFIX + topic.id.toString();
             AddonType addonType = getAddonType(topic.categoryId, tags);
@@ -376,7 +374,7 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
      */
     private Addon convertTopicToAddon(DiscourseTopicResponseDTO topic) {
         String uid = ADDON_ID_PREFIX + topic.id.toString();
-        List<String> tags = Arrays.asList(Objects.requireNonNullElse(topic.tags, new String[0]));
+        List<String> tags = topic.tags == null ? List.of() : Arrays.stream(topic.tags).map(t -> t.name).toList();
 
         AddonType addonType = getAddonType(topic.categoryId, tags);
         String type = (addonType != null) ? addonType.getId() : "";
@@ -437,9 +435,18 @@ public class CommunityMarketplaceAddonService extends AbstractRemoteAddonService
         boolean installed = addonHandlers.stream()
                 .anyMatch(handler -> handler.supports(type, contentType) && handler.isInstalled(uid));
 
+        String title = topic.title;
+        int compatibilityStart = topic.title.lastIndexOf("["); // version range always starts with [
+        if (topic.title.lastIndexOf(" ") < compatibilityStart) { // check includes [ not present
+            String potentialRange = topic.title.substring(compatibilityStart);
+            Matcher matcher = BundleVersion.RANGE_PATTERN.matcher(potentialRange);
+            if (matcher.matches()) {
+                title = topic.title.substring(0, compatibilityStart).trim();
+            }
+        }
+
         Addon.Builder builder = Addon.create(uid).withType(type).withId(id).withContentType(contentType)
-                .withLabel(topic.title).withImageLink(topic.imageUrl)
-                .withLink(COMMUNITY_TOPIC_URL + topic.id.toString())
+                .withLabel(title).withImageLink(topic.imageUrl).withLink(COMMUNITY_TOPIC_URL + topic.id.toString())
                 .withAuthor(topic.postStream.posts[0].displayUsername).withMaturity(maturity)
                 .withDetailedDescription(detailedDescription).withInstalled(installed).withProperties(properties);
 

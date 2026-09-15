@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,6 +17,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.media.Schema.AdditionalPropertiesValue;
+
 /**
  * A UIComponent represents a piece of UI element for a client frontend to render; it is kept very simple and delegates
  * the actual rendering and behavior to the frontend.
@@ -31,8 +34,10 @@ import java.util.Map;
  * @author Yannick Schaus - Initial contribution
  */
 public class UIComponent {
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     String component;
 
+    @Schema(additionalProperties = AdditionalPropertiesValue.TRUE, requiredMode = Schema.RequiredMode.REQUIRED)
     Map<String, Object> config;
 
     Map<String, List<UIComponent>> slots = null;
@@ -50,7 +55,6 @@ public class UIComponent {
      * @param componentType type of the component as known to the frontend
      */
     public UIComponent(String componentType) {
-        super();
         this.component = componentType;
         this.config = new HashMap<>();
     }
@@ -60,6 +64,7 @@ public class UIComponent {
      *
      * @return the component type
      */
+    @Schema(hidden = true)
     public String getType() {
         return component;
     }

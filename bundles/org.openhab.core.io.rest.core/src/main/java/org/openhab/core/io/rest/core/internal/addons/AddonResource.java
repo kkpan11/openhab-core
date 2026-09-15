@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,10 +16,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.text.Collator;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Collection;
-import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -40,7 +37,6 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Request;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.core.UriInfo;
@@ -49,7 +45,6 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.jetty.http.HttpStatus;
 import org.openhab.core.addon.Addon;
-import org.openhab.core.addon.AddonEvent;
 import org.openhab.core.addon.AddonEventFactory;
 import org.openhab.core.addon.AddonInfo;
 import org.openhab.core.addon.AddonInfoRegistry;
@@ -64,7 +59,6 @@ import org.openhab.core.config.core.Configuration;
 import org.openhab.core.config.discovery.addon.AddonSuggestionService;
 import org.openhab.core.events.Event;
 import org.openhab.core.events.EventPublisher;
-import org.openhab.core.events.EventSubscriber;
 import org.openhab.core.io.rest.JSONResponse;
 import org.openhab.core.io.rest.LocaleService;
 import org.openhab.core.io.rest.RESTConstants;
@@ -112,14 +106,13 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @SecurityRequirement(name = "oauth2", scopes = { "admin" })
 @Tag(name = AddonResource.PATH_ADDONS)
 @NonNullByDefault
-public class AddonResource implements RESTResource, EventSubscriber {
+public class AddonResource implements RESTResource {
 
     private static final String THREAD_POOL_NAME = "addonService";
 
     public static final String PATH_ADDONS = "addons";
 
     public static final String DEFAULT_ADDON_SERVICE = "karaf";
-    private static final Set<String> SUBSCRIBED_EVENT_TYPES = Set.of(AddonEvent.TYPE);
 
     private final Logger logger = LoggerFactory.getLogger(AddonResource.class);
     private final Set<AddonService> addonServices = new CopyOnWriteArraySet<>();
@@ -129,8 +122,6 @@ public class AddonResource implements RESTResource, EventSubscriber {
     private final AddonInfoRegistry addonInfoRegistry;
     private final ConfigDescriptionRegistry configDescriptionRegistry;
     private final AddonSuggestionService addonSuggestionService;
-
-    private @Nullable Date lastModified = null;
 
     private @Context @NonNullByDefault({}) UriInfo uriInfo;
 
@@ -151,25 +142,10 @@ public class AddonResource implements RESTResource, EventSubscriber {
     @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
     protected void addAddonService(AddonService featureService) {
         this.addonServices.add(featureService);
-        lastModified = null;
     }
 
     protected void removeAddonService(AddonService featureService) {
         this.addonServices.remove(featureService);
-    }
-
-    @Override
-    public Set<String> getSubscribedEventTypes() {
-        return SUBSCRIBED_EVENT_TYPES;
-    }
-
-    @Override
-    public void receive(Event event) {
-        lastModified = null;
-    }
-
-    private boolean lastModifiedIsValid() {
-        return (lastModified != null) && ((new Date().getTime() - lastModified.getTime()) <= 450 * 1000);
     }
 
     @GET
@@ -177,32 +153,38 @@ public class AddonResource implements RESTResource, EventSubscriber {
     @Operation(operationId = "getAddons", summary = "Get all add-ons.", responses = {
             @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = Addon.class)))),
             @ApiResponse(responseCode = "404", description = "Service not found") })
-    public Response getAddon(final @Context Request request,
+    public Response getAddon(
             @HeaderParam("Accept-Language") @Parameter(description = "language") @Nullable String language,
-            @QueryParam("serviceId") @Parameter(description = "service ID") @Nullable String serviceId) {
+            @QueryParam("serviceId") @Parameter(description = "service ID") @Nullable String serviceId,
+            @QueryParam("installedOnly") @Parameter(description = "true to return only installed add-ons") @Nullable Boolean installedOnly,
+            @QueryParam("refresh") @Parameter(description = "true to refresh add-ons before returning them") @Nullable Boolean refresh) {
         logger.debug("Received HTTP GET request at '{}'", uriInfo.getPath());
-        if (lastModifiedIsValid()) {
-            Response.ResponseBuilder responseBuilder = request.evaluatePreconditions(lastModified);
-            if (responseBuilder != null) {
-                // send 304 Not Modified
-                return responseBuilder.build();
-            }
-        } else {
-            lastModified = Date.from(Instant.now().truncatedTo(ChronoUnit.SECONDS));
-        }
 
         final Locale locale = localeService.getLocale(language);
+        boolean forceRefresh = Boolean.TRUE.equals(refresh);
+
+        Stream<Addon> addons;
         if ("all".equals(serviceId)) {
-            return Response.ok(new Stream2JSONInputStream(getAllAddons(locale))).lastModified(lastModified)
-                    .cacheControl(RESTConstants.CACHE_CONTROL).build();
+            if (forceRefresh) {
+                addonServices.forEach(AddonService::refreshSource);
+            }
+            addons = getAllAddons(locale);
         } else {
             AddonService addonService = (serviceId != null) ? getServiceById(serviceId) : getDefaultService();
             if (addonService == null) {
                 return Response.status(HttpStatus.NOT_FOUND_404).build();
             }
-            return Response.ok(new Stream2JSONInputStream(addonService.getAddons(locale).stream()))
-                    .lastModified(lastModified).cacheControl(RESTConstants.CACHE_CONTROL).build();
+            if (forceRefresh) {
+                addonService.refreshSource();
+            }
+            addons = addonService.getAddons(locale).stream();
         }
+
+        if (Boolean.TRUE.equals(installedOnly)) {
+            addons = addons.filter(Addon::isInstalled);
+        }
+
+        return Response.ok(new Stream2JSONInputStream(addons)).build();
     }
 
     @GET
@@ -210,23 +192,12 @@ public class AddonResource implements RESTResource, EventSubscriber {
     @Produces(MediaType.APPLICATION_JSON)
     @Operation(operationId = "getAddonTypes", summary = "Get all add-on types.", responses = {
             @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = AddonType.class)))) })
-    public Response getServices(final @Context Request request,
+    public Response getServices(
             @HeaderParam("Accept-Language") @Parameter(description = "language") @Nullable String language) {
         logger.debug("Received HTTP GET request at '{}'", uriInfo.getPath());
-        if (lastModifiedIsValid()) {
-            Response.ResponseBuilder responseBuilder = request.evaluatePreconditions(lastModified);
-            if (responseBuilder != null) {
-                // send 304 Not Modified
-                return responseBuilder.build();
-            }
-        } else {
-            lastModified = Date.from(Instant.now().truncatedTo(ChronoUnit.SECONDS));
-        }
-
         final Locale locale = localeService.getLocale(language);
         Stream<AddonServiceDTO> addonTypeStream = addonServices.stream().map(s -> convertToAddonServiceDTO(s, locale));
-        return Response.ok(new Stream2JSONInputStream(addonTypeStream)).lastModified(lastModified)
-                .cacheControl(RESTConstants.CACHE_CONTROL).build();
+        return Response.ok(new Stream2JSONInputStream(addonTypeStream)).build();
     }
 
     @GET
@@ -399,7 +370,7 @@ public class AddonResource implements RESTResource, EventSubscriber {
             @ApiResponse(responseCode = "500", description = "Configuration can not be updated due to internal error") })
     public Response updateConfiguration(@PathParam("addonId") @Parameter(description = "Add-on id") String addonId,
             @QueryParam("serviceId") @Parameter(description = "service ID") @Nullable String serviceId,
-            @Nullable Map<String, Object> configuration) {
+            @Nullable Map<String, @Nullable Object> configuration) {
         try {
             AddonService addonService = (serviceId != null) ? getServiceById(serviceId) : getDefaultService();
             if (addonService == null) {
@@ -416,7 +387,7 @@ public class AddonResource implements RESTResource, EventSubscriber {
             }
             Configuration oldConfiguration = configurationService.get(addonInfo.getServiceId());
             configurationService.update(addonInfo.getServiceId(),
-                    new Configuration(normalizeConfiguration(configuration, addonId)));
+                    new Configuration(normalizeConfiguration(configuration, infoUid)));
             return oldConfiguration != null ? Response.ok(oldConfiguration.getProperties()).build()
                     : Response.noContent().build();
         } catch (IOException ex) {
@@ -425,8 +396,8 @@ public class AddonResource implements RESTResource, EventSubscriber {
         }
     }
 
-    private @Nullable Map<String, Object> normalizeConfiguration(@Nullable Map<String, Object> properties,
-            String addonId) {
+    private @Nullable Map<String, @Nullable Object> normalizeConfiguration(
+            @Nullable Map<String, @Nullable Object> properties, String addonId) {
         if (properties == null || properties.isEmpty()) {
             return properties;
         }

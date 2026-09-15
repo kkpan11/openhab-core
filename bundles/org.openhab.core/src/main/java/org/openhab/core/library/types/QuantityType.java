@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,6 +14,7 @@ package org.openhab.core.library.types;
 
 import static org.eclipse.jdt.annotation.DefaultLocation.*;
 
+import java.io.Serial;
 import java.math.BigDecimal;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
@@ -46,6 +47,9 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.internal.library.unit.UnitInitializer;
 import org.openhab.core.items.events.ItemStateEvent;
+import org.openhab.core.library.unit.CurrencyUnits;
+import org.openhab.core.library.unit.ImperialUnits;
+import org.openhab.core.library.unit.SIUnits;
 import org.openhab.core.library.unit.Units;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.PrimitiveType;
@@ -61,7 +65,39 @@ import tech.units.indriya.quantity.Quantities;
 import tech.uom.lib.common.function.QuantityFunctions;
 
 /**
- * The measure type extends DecimalType to handle physical unit measurement
+ * Command type for measurable quantities, such as:
+ * 
+ * <ul>
+ * <li>Mass</li>
+ * <li>Time</li>
+ * <li>Distance</li>
+ * <li>Speed</li>
+ * <li>Temperature</li>
+ * <li>Electric Current</li>
+ * <li>Electric Potential</li>
+ * <li>Energy</li>
+ * <li>Power</li>
+ * <li>Data Amount</li>
+ * </ul>
+ * 
+ * <p>
+ * Quantities are usually specified in suitable units of measurement. All units are accessible via the openHAB classes
+ * {@link Units}, {@link SIUnits}, {@link ImperialUnits} and {@link CurrencyUnits}.
+ * 
+ * <p>
+ * Examples:
+ * 
+ * <pre>
+ * {@code
+ * new QuantityType<>("65 kWh") // 65 kWh, unit is parsed automatically
+ * new QuantityType<>(22d, SIUnits.CELSIUS) // 22°C
+ * new QuantityType<>(71.6d, ImperialUnits.FAHRENHEIT) // 71.6°F 
+ * new QuantityType<>(1, MetricPrefix.MEGA(Units.BYTE)) // 1 MB
+ * new QuantityType<>(56.78d, Units.WATT_HOUR) // 56.78 Wh
+ * }
+ * </pre>
+ * 
+ * @param <T> the unit associated with the quantity
  *
  * @author Gaël L'hopital - Initial contribution
  */
@@ -71,6 +107,7 @@ import tech.uom.lib.common.function.QuantityFunctions;
 public class QuantityType<T extends Quantity<T>> extends Number
         implements PrimitiveType, State, Command, Comparable<QuantityType<T>> {
 
+    @Serial
     private static final long serialVersionUID = 8828949721938234629L;
     private static final BigDecimal BIG_DECIMAL_HUNDRED = BigDecimal.valueOf(100);
 
@@ -238,10 +275,15 @@ public class QuantityType<T extends Quantity<T>> extends Number
         if (!(obj instanceof QuantityType<?> other)) {
             return false;
         }
-        if (!quantity.getUnit().isCompatible(other.quantity.getUnit())
-                && !quantity.getUnit().inverse().isCompatible(other.quantity.getUnit())) {
-            return false;
-        } else if (internalCompareTo(other) != 0) {
+        if (quantity.getUnit().isCompatible(other.quantity.getUnit())) {
+            if (internalCompareTo(other) != 0) {
+                return false;
+            }
+        } else if (quantity.getUnit().isCompatible(other.quantity.getUnit().inverse())) {
+            if (internalCompareTo(other.inverse()) != 0) {
+                return false;
+            }
+        } else {
             return false;
         }
 
@@ -262,8 +304,6 @@ public class QuantityType<T extends Quantity<T>> extends Number
             } else {
                 throw new IllegalArgumentException("Unable to convert to system unit during compare.");
             }
-        } else if (quantity.getUnit().inverse().isCompatible(o.quantity.getUnit())) {
-            return inverse().internalCompareTo(o);
         } else {
             throw new IllegalArgumentException("Can not compare incompatible units.");
         }
@@ -312,8 +352,20 @@ public class QuantityType<T extends Quantity<T>> extends Number
     /**
      * Convert this QuantityType to a new {@link QuantityType} using the given target unit.
      *
-     * Implicit conversions using inverse units are allowed (i.e. {@code mired <=> Kelvin}). This may
-     * change the dimension.
+     * Implicit conversions using inverse units are allowed (i.e. {@code mired <=> Kelvin} / {@code Hertz <=> Second} /
+     * {@code Ohm <=> Siemens}). This may change the dimension.
+     * <p>
+     * This method converts the quantity from its actual unit to its respective system unit before converting to the
+     * inverse unit. This enables it to support not only conversions {@code mired <=> Kelvin} but also conversions
+     * {@code mired <=> Fahrenheit} and {@code mired <=> Celsius}.
+     * <p>
+     * Notes on units not yet implemented in openHAB:
+     * <li>The optics unit {@code Dioptre} ({@code dpt} / {@code D}) is the inverse of length ({@code m-1}); if it were
+     * added it would give correct results.</li>
+     * <li>The optics unit {@code Kaiser} for wave number is also the inverse of length ({@code cm-1}); it is old and
+     * not commonly used, but if it were added it would NOT give correct results.</li>
+     * <li>If you discover other units similar to {@code Kaiser} above: => Please inform openHAB maintainers.</li>
+     * <p>
      *
      * @param targetUnit the unit to which this {@link QuantityType} will be converted to.
      * @return the new {@link QuantityType} in the given {@link Unit} or {@code null} in case of an error.
@@ -322,7 +374,8 @@ public class QuantityType<T extends Quantity<T>> extends Number
         // only invert if unit is not equal and inverse is compatible and targetUnit is not ONE
         if (!targetUnit.equals(getUnit()) && !targetUnit.isCompatible(AbstractUnit.ONE)
                 && getUnit().inverse().isCompatible(targetUnit)) {
-            return inverse().toUnit(targetUnit);
+            QuantityType<?> systemQuantity = toUnit(getUnit().getSystemUnit());
+            return systemQuantity == null ? null : systemQuantity.inverse().toUnit(targetUnit);
         }
         return toUnit(targetUnit);
     }
@@ -332,7 +385,6 @@ public class QuantityType<T extends Quantity<T>> extends Number
         if (unit != null) {
             return toInvertibleUnit(unit);
         }
-
         return null;
     }
 
@@ -576,6 +628,17 @@ public class QuantityType<T extends Quantity<T>> extends Number
 
     /**
      * Returns the sum of the given {@link QuantityType} with this QuantityType.
+     * <p>
+     * The result is an incremental addition where the operand is interpreted as an amount to be added based on the
+     * difference between its value converted to the unit of this instance and the zero point of the unit of this
+     * instance. So for example:
+     * <li>Expression '{@code new QuantityType("20 °C").add(new QuantityType("30 °C")}' gives '{@code 50 °C}'</li>
+     * <li>Expression '{@code new QuantityType("20 °C").add(new QuantityType("30 K")}' gives '{@code 50 °C}'</li>
+     * <li>Expression '{@code new QuantityType("20 °C").add(new QuantityType("54 °F")}' gives '{@code 50 °C}'</li>
+     * <li>Expression '{@code new QuantityType("20 K").add(new QuantityType("30 °C")}' gives '{@code 50 K}'</li>
+     * <li>Expression '{@code new QuantityType("20 K").add(new QuantityType("30 K")}' gives '{@code 50 K}'</li>
+     * <li>Expression '{@code new QuantityType("20 K").add(new QuantityType("54 °F")}' gives '{@code 50 K}'</li>
+     * <p>
      *
      * @param state the {@link QuantityType} to add to this QuantityType.
      * @return the sum of the given {@link QuantityType} with this QuantityType.
@@ -597,6 +660,18 @@ public class QuantityType<T extends Quantity<T>> extends Number
 
     /**
      * Subtract the given {@link QuantityType} from this QuantityType.
+     *
+     * <p>
+     * The result is an incremental subtraction where the operand is interpreted as an amount to be subtracted based on
+     * the difference between its value converted to the unit of this instance and the zero point of the unit of this
+     * instance. So for example:
+     * <li>Expression '{@code new QuantityType("50 °C").subtract(new QuantityType("30 °C")}' gives '{@code 20 °C}'</li>
+     * <li>Expression '{@code new QuantityType("50 °C").subtract(new QuantityType("30 K")}' gives '{@code 20 °C}'</li>
+     * <li>Expression '{@code new QuantityType("50 °C").subtract(new QuantityType("54 °F")}' gives '{@code 20 °C}'</li>
+     * <li>Expression '{@code new QuantityType("50 K").subtract(new QuantityType("30 °C")}' gives '{@code 20 K}'</li>
+     * <li>Expression '{@code new QuantityType("50 K").subtract(new QuantityType("30 K")}' gives '{@code 20 K}'</li>
+     * <li>Expression '{@code new QuantityType("50 K").subtract(new QuantityType("54 °F")}' gives '{@code 20 K}'</li>
+     * <p>
      *
      * @param state the {@link QuantityType} to subtract from this QuantityType.
      * @return the difference by subtracting the given {@link QuantityType} from this QuantityType.

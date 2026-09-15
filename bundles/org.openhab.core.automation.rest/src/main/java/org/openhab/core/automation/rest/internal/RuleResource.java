@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,6 +25,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import javax.annotation.security.RolesAllowed;
@@ -76,6 +77,7 @@ import org.openhab.core.common.registry.RegistryChangedRunnableListener;
 import org.openhab.core.config.core.ConfigUtil;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.events.Event;
+import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.io.rest.DTOMapper;
 import org.openhab.core.io.rest.JSONResponse;
 import org.openhab.core.io.rest.RESTConstants;
@@ -133,6 +135,7 @@ public class RuleResource implements RESTResource {
     private final RuleManager ruleManager;
     private final RuleRegistry ruleRegistry;
     private final ManagedRuleProvider managedRuleProvider;
+    private final TimeZoneProvider timeZoneProvider;
     private final RegistryChangedRunnableListener<Rule> resetLastModifiedChangeListener = new RegistryChangedRunnableListener<>(
             () -> lastModified = null);
 
@@ -144,11 +147,13 @@ public class RuleResource implements RESTResource {
             final @Reference DTOMapper dtoMapper, //
             final @Reference RuleManager ruleManager, //
             final @Reference RuleRegistry ruleRegistry, //
-            final @Reference ManagedRuleProvider managedRuleProvider) {
+            final @Reference ManagedRuleProvider managedRuleProvider, //
+            final @Reference TimeZoneProvider timeZoneProvider) {
         this.dtoMapper = dtoMapper;
         this.ruleManager = ruleManager;
         this.ruleRegistry = ruleRegistry;
         this.managedRuleProvider = managedRuleProvider;
+        this.timeZoneProvider = timeZoneProvider;
 
         this.ruleRegistry.addRegistryChangeListener(resetLastModifiedChangeListener);
     }
@@ -207,7 +212,8 @@ public class RuleResource implements RESTResource {
         Stream<EnrichedRuleDTO> rules = ruleRegistry.stream().filter(p) // filter according to Predicates
                 .map(rule -> EnrichedRuleDTOMapper.map(rule, ruleManager, managedRuleProvider)); // map matching rules
         if (summary != null && summary) {
-            rules = dtoMapper.limitToFields(rules, "uid,templateUID,name,visibility,description,status,tags,editable");
+            rules = dtoMapper.limitToFields(rules,
+                    "uid,templateUID,templateState,name,visibility,description,status,tags,configuration,editable");
         }
 
         return Response.ok(new Stream2JSONInputStream(rules)).build();
@@ -339,12 +345,12 @@ public class RuleResource implements RESTResource {
     @Consumes(MediaType.TEXT_PLAIN)
     @Operation(operationId = "enableRule", summary = "Sets the rule enabled status.", responses = {
             @ApiResponse(responseCode = "200", description = "OK"),
-            @ApiResponse(responseCode = "404", description = "Rule corresponding to the given UID does not found.") })
+            @ApiResponse(responseCode = "404", description = "Rule corresponding to the given UID was not found.") })
     public Response enableRule(@PathParam("ruleUID") @Parameter(description = "ruleUID") String ruleUID,
             @Parameter(description = "enable", required = true) String enabled) throws IOException {
         Rule rule = ruleRegistry.get(ruleUID);
         if (rule == null) {
-            logger.info("Received HTTP PUT request for set enabled at '{}' for the unknown rule '{}'.",
+            logger.info("Received HTTP POST request for set enabled at '{}' for the unknown rule '{}'.",
                     uriInfo.getPath(), ruleUID);
             return Response.status(Status.NOT_FOUND).build();
         } else {
@@ -354,14 +360,33 @@ public class RuleResource implements RESTResource {
     }
 
     @POST
+    @Path("/{ruleUID}/regenerate")
+    @Consumes(MediaType.TEXT_PLAIN)
+    @Operation(operationId = "regenerateRule", summary = "Regenerates the rule from its template.", responses = {
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "404", description = "A template-based rule with the given UID was not found.") })
+    public Response regenerateRule(@PathParam("ruleUID") @Parameter(description = "ruleUID") String ruleUID)
+            throws IOException {
+        try {
+            ruleRegistry.regenerateFromTemplate(ruleUID);
+            return Response.ok(null, MediaType.TEXT_PLAIN).build();
+        } catch (IllegalArgumentException e) {
+            logger.info(
+                    "Received HTTP POST request for regenerating rule from template at '{}' for an invalid rule UID '{}'.",
+                    uriInfo.getPath(), ruleUID);
+            return Response.status(Status.NOT_FOUND).build();
+        }
+    }
+
+    @POST
     @RolesAllowed({ Role.USER, Role.ADMIN })
     @Path("/{ruleUID}/runnow")
     @Consumes(MediaType.APPLICATION_JSON)
     @Operation(operationId = "runRuleNow", summary = "Executes actions of the rule.", responses = {
             @ApiResponse(responseCode = "200", description = "OK"),
-            @ApiResponse(responseCode = "404", description = "Rule corresponding to the given UID does not found.") })
+            @ApiResponse(responseCode = "404", description = "Rule corresponding to the given UID was not found.") })
     public Response runNow(@PathParam("ruleUID") @Parameter(description = "ruleUID") String ruleUID,
-            @Nullable @Parameter(description = "the context for running this rule", allowEmptyValue = true) Map<String, Object> context)
+            @Nullable @Parameter(description = "the context for running this rule", allowEmptyValue = true) Map<String, @Nullable Object> context)
             throws IOException {
         Rule rule = ruleRegistry.get(ruleUID);
         if (rule == null) {
@@ -419,10 +444,10 @@ public class RuleResource implements RESTResource {
                     + DateTimeType.DATE_PATTERN_WITH_TZ_AND_MS + "]") @QueryParam("from") @Nullable String from,
             @Parameter(description = "End time of the simulated rule executions. Will default to 30 days after the start time. Must be less than 180 days after the given start time. ["
                     + DateTimeType.DATE_PATTERN_WITH_TZ_AND_MS + "]") @QueryParam("until") @Nullable String until) {
-        final ZonedDateTime fromDate = from == null || from.isEmpty() ? ZonedDateTime.now() : parseTime(from);
-        final ZonedDateTime untilDate = until == null || until.isEmpty() ? fromDate.plusDays(31) : parseTime(until);
+        final ZonedDateTime fromDate = parseTime(from, ZonedDateTime::now);
+        final ZonedDateTime untilDate = parseTime(until, () -> fromDate.plusDays(31));
 
-        if (daysBetween(fromDate, untilDate) >= 180) {
+        if (ChronoUnit.DAYS.between(fromDate, untilDate) >= 180) {
             return JSONResponse.createErrorResponse(Status.BAD_REQUEST,
                     "Simulated time span must be smaller than 180 days.");
         }
@@ -431,13 +456,12 @@ public class RuleResource implements RESTResource {
         return Response.ok(ruleExecutions.toList()).build();
     }
 
-    private static ZonedDateTime parseTime(String sTime) {
+    private ZonedDateTime parseTime(@Nullable String sTime, Supplier<ZonedDateTime> defaultSupplier) {
+        if (sTime == null || sTime.isEmpty()) {
+            return defaultSupplier.get();
+        }
         final DateTimeType dateTime = new DateTimeType(sTime);
-        return dateTime.getZonedDateTime();
-    }
-
-    private static long daysBetween(ZonedDateTime d1, ZonedDateTime d2) {
-        return ChronoUnit.DAYS.between(d1, d2);
+        return dateTime.getZonedDateTime(timeZoneProvider.getTimeZone());
     }
 
     @GET

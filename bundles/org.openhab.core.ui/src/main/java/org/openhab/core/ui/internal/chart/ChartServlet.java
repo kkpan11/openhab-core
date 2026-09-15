@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,6 +14,7 @@ package org.openhab.core.ui.internal.chart;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.Serial;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.Period;
@@ -80,6 +81,7 @@ import org.slf4j.LoggerFactory;
 @NonNullByDefault
 public class ChartServlet extends HttpServlet {
 
+    @Serial
     private static final long serialVersionUID = 7700873790924746422L;
 
     protected static final String CONFIG_URI = "system:chart";
@@ -283,6 +285,7 @@ public class ChartServlet extends HttpServlet {
         }
 
         String yAxisDecimalPattern = req.getParameter("yAxisDecimalPattern");
+        String interpolation = req.getParameter("interpolation");
 
         // Read out parameter 'legend'
         String legendParam = req.getParameter("legend");
@@ -303,7 +306,7 @@ public class ChartServlet extends HttpServlet {
         try {
             BufferedImage chart = provider.createChart(serviceName, req.getParameter("theme"), beginEnd.begin(),
                     beginEnd.end(), height, width, req.getParameter("items"), req.getParameter("groups"), dpi,
-                    yAxisDecimalPattern, legend);
+                    yAxisDecimalPattern, interpolation, legend);
             // Set the content type to that provided by the chart provider
             res.setContentType("image/" + provider.getChartType());
             try (ImageOutputStream imageOutputStream = ImageIO.createImageOutputStream(res.getOutputStream())) {

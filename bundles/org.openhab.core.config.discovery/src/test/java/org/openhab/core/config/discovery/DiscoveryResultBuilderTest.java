@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,7 +15,6 @@ package org.openhab.core.config.discovery;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.collection.IsMapContaining.hasEntry;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Map;
 
@@ -92,6 +91,18 @@ public class DiscoveryResultBuilderTest {
     }
 
     @Test
+    public void testDiscoveryResultBuilderCopy() {
+        DiscoveryResult r = DiscoveryResultBuilder.create(discoveryResult).build();
+        assertThat(r.getThingUID(), is(discoveryResult.getThingUID()));
+        assertThat(r.getThingTypeUID(), is(discoveryResult.getThingTypeUID()));
+        assertThat(r.getBindingId(), is(discoveryResult.getBindingId()));
+        assertThat(r.getLabel(), is(discoveryResult.getLabel()));
+        assertThat(r.getProperties(), is(discoveryResult.getProperties()));
+        assertThat(r.getRepresentationProperty(), is(discoveryResult.getRepresentationProperty()));
+        assertThat(r.getTimeToLive(), is(discoveryResult.getTimeToLive()));
+    }
+
+    @Test
     public void testDiscoveryResultBuilderWithTTL() {
         DiscoveryResult otherDiscoveryResult = builder.withTTL(100L).build();
 
@@ -107,8 +118,10 @@ public class DiscoveryResultBuilderTest {
 
     @Test
     public void testDiscoveryResultBuilderWithBridge() {
-        assertThrows(IllegalArgumentException.class, () -> DiscoveryResultBuilder
-                .create(new ThingUID(THING_TYPE_UID, "otherThingId")).withBridge(BRIDGE_UID).build());
+        DiscoveryResult otherDiscoveryResult = DiscoveryResultBuilder
+                .create(new ThingUID(THING_TYPE_UID, "otherThingId")).withBridge(BRIDGE_UID).build();
+
+        assertThat(otherDiscoveryResult.getBridgeUID(), is(BRIDGE_UID));
     }
 
     @Test

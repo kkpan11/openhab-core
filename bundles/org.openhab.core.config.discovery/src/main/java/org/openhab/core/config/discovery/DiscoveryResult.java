@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,7 @@
  */
 package org.openhab.core.config.discovery;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -121,11 +122,11 @@ public interface DiscoveryResult {
     ThingUID getBridgeUID();
 
     /**
-     * Returns the timestamp of this result object.
+     * Returns the creation time of this result object.
      *
-     * @return timestamp as long
+     * @return timestamp
      */
-    long getTimestamp();
+    Instant getCreationTime();
 
     /**
      * Returns the time to live in seconds for this entry.

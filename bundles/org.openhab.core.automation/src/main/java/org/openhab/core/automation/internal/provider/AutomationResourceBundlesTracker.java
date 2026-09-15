@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -275,14 +275,11 @@ public class AutomationResourceBundlesTracker implements BundleTrackerCustomizer
     }
 
     private BundleEvent initializeEvent(Bundle bundle) {
-        switch (bundle.getState()) {
-            case Bundle.INSTALLED:
-                return new BundleEvent(BundleEvent.INSTALLED, bundle);
-            case Bundle.RESOLVED:
-                return new BundleEvent(BundleEvent.RESOLVED, bundle);
-            default:
-                return new BundleEvent(BundleEvent.STARTED, bundle);
-        }
+        return switch (bundle.getState()) {
+            case Bundle.INSTALLED -> new BundleEvent(BundleEvent.INSTALLED, bundle);
+            case Bundle.RESOLVED -> new BundleEvent(BundleEvent.RESOLVED, bundle);
+            default -> new BundleEvent(BundleEvent.STARTED, bundle);
+        };
     }
 
     /**

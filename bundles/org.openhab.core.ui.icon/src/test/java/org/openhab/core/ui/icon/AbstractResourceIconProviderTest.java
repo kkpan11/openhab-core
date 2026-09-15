@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -52,18 +52,13 @@ public class AbstractResourceIconProviderTest {
         provider = new AbstractResourceIconProvider(i18nProviderMock) {
             @Override
             protected @Nullable InputStream getResource(String iconset, String resourceName) {
-                switch (resourceName) {
-                    case "x-30.png":
-                        return new ByteArrayInputStream("x-30.png".getBytes());
-                    case "x-y z.png":
-                        return new ByteArrayInputStream("x-y z.png".getBytes());
-                    case "a-bb-ccc-30.png":
-                        return new ByteArrayInputStream("a-bb-ccc-30.png".getBytes());
-                    case "a-bb-ccc-y z.png":
-                        return new ByteArrayInputStream("a-bb-ccc-y z.png".getBytes());
-                    default:
-                        return null;
-                }
+                return switch (resourceName) {
+                    case "x-30.png" -> new ByteArrayInputStream("x-30.png".getBytes());
+                    case "x-y z.png" -> new ByteArrayInputStream("x-y z.png".getBytes());
+                    case "a-bb-ccc-30.png" -> new ByteArrayInputStream("a-bb-ccc-30.png".getBytes());
+                    case "a-bb-ccc-y z.png" -> new ByteArrayInputStream("a-bb-ccc-y z.png".getBytes());
+                    default -> null;
+                };
             }
 
             private String substringAfterLast(String str, String separator) {

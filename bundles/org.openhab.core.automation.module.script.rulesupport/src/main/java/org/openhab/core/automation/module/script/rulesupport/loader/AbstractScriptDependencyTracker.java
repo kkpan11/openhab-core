@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -78,9 +78,9 @@ public abstract class AbstractScriptDependencyTracker
     }
 
     @Override
-    public void processWatchEvent(WatchService.Kind kind, Path path) {
-        File file = libraryPath.resolve(path).toFile();
-        if (!file.isHidden() && (kind == DELETE || (file.canRead() && (kind == CREATE || kind == MODIFY)))) {
+    public void processWatchEvent(WatchService.Kind kind, Path fullPath) {
+        File file = fullPath.toFile();
+        if (kind == DELETE || (!file.isHidden() && file.canRead() && (kind == CREATE || kind == MODIFY))) {
             dependencyChanged(file.toString());
         }
     }

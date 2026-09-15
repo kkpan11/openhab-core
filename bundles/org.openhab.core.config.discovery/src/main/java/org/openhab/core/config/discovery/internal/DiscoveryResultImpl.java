@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -215,8 +215,8 @@ public class DiscoveryResultImpl implements DiscoveryResult {
     }
 
     @Override
-    public long getTimestamp() {
-        return Instant.MIN.equals(timestamp) ? 0 : timestamp.toEpochMilli();
+    public Instant getCreationTime() {
+        return timestamp;
     }
 
     @Override

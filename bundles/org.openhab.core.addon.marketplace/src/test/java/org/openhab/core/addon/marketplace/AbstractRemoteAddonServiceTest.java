@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -128,7 +128,7 @@ public class AbstractRemoteAddonServiceTest {
     }
 
     @Test
-    public void testInstalledAddonIsStillPresentAfterRemoteIsDisabledOrMissing() {
+    public void testInstalledAddonIsStillPresentAfterRemoteIsDisabledOrMissingAfterRefresh() {
         addonService.setInstalled(TEST_ADDON);
         addonService.addToStorage(TEST_ADDON);
 
@@ -139,10 +139,13 @@ public class AbstractRemoteAddonServiceTest {
         // disable remote repo
         properties.put(CONFIG_REMOTE_ENABLED, false);
 
+        // force refresh after changing settings
+        addonService.refreshSource();
+
         // check only the installed addon is present
         addons = addonService.getAddons(null);
         assertThat(addons, hasSize(1));
-        assertThat(addons.get(0).getUid(), is(getFullAddonId(TEST_ADDON)));
+        assertThat(addons.getFirst().getUid(), is(getFullAddonId(TEST_ADDON)));
     }
 
     @Test

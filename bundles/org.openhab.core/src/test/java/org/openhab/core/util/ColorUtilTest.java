@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,6 +16,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThan;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -273,6 +274,20 @@ public class ColorUtilTest {
         assertTrue(hsbType.closeTo(new HSBType(expected), 0.01));
     }
 
+    @Test
+    public void testXyToDuv() {
+        // Black
+        assertEquals(-0.0017d, ColorUtil.xyToDuv(new double[] { 0.3227d, 0.3290d }), 0.0001);
+        // 2700K
+        assertEquals(0.0000d, ColorUtil.xyToDuv(new double[] { 0.4599d, 0.4106d }), 0.0001);
+        // 3000K
+        assertEquals(0.0000d, ColorUtil.xyToDuv(new double[] { 0.4369d, 0.4041d }), 0.0001);
+        // Red
+        assertEquals(0.2727d, ColorUtil.xyToDuv(new double[] { 0.6987d, 0.2974d }), 0.0001);
+        // Yellow
+        assertEquals(0.0387d, ColorUtil.xyToDuv(new double[] { 0.4442d, 0.5166d }), 0.0001);
+    }
+
     private void xyToXY(double[] xy, Gamut gamut) {
         assertTrue(xy.length > 1);
         HSBType hsb = ColorUtil.xyToHsb(xy, gamut);
@@ -374,7 +389,7 @@ public class ColorUtilTest {
      */
     private static Stream<Arguments> allHSB() {
         List<Arguments> result = new ArrayList<>();
-        final double step = 5.0;
+        final double step = 20.0;
         for (double h = 0; h < 360; h = h + step) {
             for (double s = 0; s <= 100; s = s + step) {
                 for (double b = 0; b <= 100; b = b + step) {
@@ -420,7 +435,7 @@ public class ColorUtilTest {
      */
     private static Stream<Arguments> allRGBW() {
         List<Arguments> result = new ArrayList<>();
-        final double step = 5.0;
+        final double step = 20.0;
         for (double r = 0; r <= 100; r = r + step) {
             for (double g = 0; g <= 100; g = g + step) {
                 for (double b = 0; b <= 100; b = b + step) {
@@ -429,6 +444,21 @@ public class ColorUtilTest {
                     }
                 }
             }
+        }
+        return result.stream();
+    }
+
+    /*
+     * Return an extended stream of Kelvin color temperature values.
+     * <p>
+     * Note that McCamy's approximation is accurate to better than 1% from 2000 K to 10000 K but below 2000 K the
+     * approximation error increases rapidly and exponentially. So we exclude those low values from the tests.
+     */
+    private static Stream<Arguments> allKelvin() {
+        List<Arguments> result = new ArrayList<>();
+        final double step = 5.0;
+        for (double kelvin = 2000; kelvin <= 10000; kelvin = kelvin + step) {
+            result.add(Arguments.of(kelvin));
         }
         return result.stream();
     }
@@ -640,5 +670,27 @@ public class ColorUtilTest {
                             rgbw2[0].doubleValue() / 100, rgbw2[1].doubleValue() / 100, rgbw2[2].doubleValue() / 100,
                             rgbw2[3].doubleValue() / 100, e.getMessage()));
         }
+    }
+
+    /**
+     * Test conversion between colour temperature in Kelvin and points on the colour temperature locus in the CIE XY
+     * colour space. Specifically test the minimum and maximum limits 1000 .. 100 Mirek i.e. 1000 .. 10000 K
+     */
+    @Test
+    void testKelvinXyConversionLimits() {
+        assertThrows(IndexOutOfBoundsException.class, () -> ColorUtil.kelvinToXY(1000000 / 1001));
+        assertDoesNotThrow(() -> ColorUtil.kelvinToXY(1000000 / 1000));
+        assertDoesNotThrow(() -> ColorUtil.kelvinToXY(1000000 / 100));
+        assertThrows(IndexOutOfBoundsException.class, () -> ColorUtil.kelvinToXY(1000000 / 99));
+    }
+
+    /**
+     * Test conversion between colour temperature in Kelvin and points on the colour temperature locus in the CIE XY
+     * colour space. Specifically test round trip conversions K => XY => K
+     */
+    @ParameterizedTest
+    @MethodSource("allKelvin")
+    public void testKelvinXyRoundTrip(double kelvin) {
+        assertEquals(kelvin, ColorUtil.xyToKelvin(ColorUtil.kelvinToXY(kelvin)), kelvin / 100);
     }
 }

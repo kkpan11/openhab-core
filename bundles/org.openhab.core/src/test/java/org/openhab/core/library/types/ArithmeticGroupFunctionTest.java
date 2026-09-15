@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -204,6 +204,58 @@ public class ArithmeticGroupFunctionTest {
         State state = function.calculate(items);
 
         assertEquals(OpenClosedType.OPEN, state);
+    }
+
+    @Test
+    public void testXorFunction() {
+        Set<Item> items = new HashSet<>();
+        items.add(new TestItem("TestItem1", OpenClosedType.OPEN));
+        items.add(new TestItem("TestItem2", OpenClosedType.CLOSED));
+
+        GroupFunction function = new ArithmeticGroupFunction.Xor(OpenClosedType.OPEN, OpenClosedType.CLOSED);
+        State state = function.calculate(items);
+
+        assertEquals(OpenClosedType.OPEN, state);
+    }
+
+    @Test
+    public void testXorFunctionMultiple() {
+        Set<Item> items = new HashSet<>();
+        items.add(new TestItem("TestItem1", OpenClosedType.CLOSED));
+        items.add(new TestItem("TestItem2", OpenClosedType.CLOSED));
+        items.add(new TestItem("TestItem3", OpenClosedType.OPEN));
+        items.add(new TestItem("TestItem4", OpenClosedType.CLOSED));
+
+        GroupFunction function = new ArithmeticGroupFunction.Xor(OpenClosedType.OPEN, OpenClosedType.CLOSED);
+        State state = function.calculate(items);
+
+        assertEquals(OpenClosedType.OPEN, state);
+    }
+
+    @Test
+    public void testXorFunctionNegative() {
+        Set<Item> items = new HashSet<>();
+        items.add(new TestItem("TestItem1", OpenClosedType.OPEN));
+        items.add(new TestItem("TestItem2", OpenClosedType.OPEN));
+
+        GroupFunction function = new ArithmeticGroupFunction.Xor(OpenClosedType.OPEN, OpenClosedType.CLOSED);
+        State state = function.calculate(items);
+
+        assertEquals(OpenClosedType.CLOSED, state);
+    }
+
+    @Test
+    public void testXorFunctionNegativeMultiple() {
+        Set<Item> items = new HashSet<>();
+        items.add(new TestItem("TestItem1", OpenClosedType.CLOSED));
+        items.add(new TestItem("TestItem2", OpenClosedType.OPEN));
+        items.add(new TestItem("TestItem3", OpenClosedType.OPEN));
+        items.add(new TestItem("TestItem4", OpenClosedType.CLOSED));
+
+        GroupFunction function = new ArithmeticGroupFunction.Xor(OpenClosedType.OPEN, OpenClosedType.CLOSED);
+        State state = function.calculate(items);
+
+        assertEquals(OpenClosedType.CLOSED, state);
     }
 
     @Test

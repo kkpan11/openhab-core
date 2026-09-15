@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,7 +17,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 
-import org.openhab.core.events.Event;
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.events.EventFactory;
 import org.openhab.core.events.EventSubscriber;
 import org.osgi.service.component.ComponentContext;
@@ -27,19 +28,21 @@ import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
+import org.osgi.service.event.Event;
 import org.osgi.service.event.EventHandler;
 
 /**
  * The {@link OSGiEventManager} provides an OSGi based default implementation of the openHAB event bus.
  *
  * The OSGiEventHandler tracks {@link EventSubscriber}s and {@link EventFactory}s, receives OSGi events (by
- * implementing the OSGi {@link EventHandler} interface) and dispatches the received OSGi events as OH {@link Event}s
- * to the {@link EventSubscriber}s if the provided filter applies.
+ * implementing the OSGi {@link EventHandler} interface) and dispatches the received OSGi events
+ * as OH {@link org.openhab.core.events.Event}s to the {@link EventSubscriber}s if the provided filter applies.
  *
  * @author Stefan Bußweiler - Initial contribution
  * @author Markus Rathgeb - Return on received events as fast as possible (handle event in another thread)
  */
 @Component(immediate = true, property = { "event.topics:String=openhab" })
+@NonNullByDefault
 public class OSGiEventManager implements EventHandler {
 
     /** The event subscribers indexed by the event type. */
@@ -47,20 +50,17 @@ public class OSGiEventManager implements EventHandler {
     private final Map<String, Set<EventSubscriber>> typedEventSubscribers = new ConcurrentHashMap<>();
     private final Map<String, EventFactory> typedEventFactories = new ConcurrentHashMap<>();
 
-    private ThreadedEventHandler eventHandler;
+    private final ThreadedEventHandler eventHandler;
 
     @Activate
-    protected void activate(ComponentContext componentContext) {
+    public OSGiEventManager(ComponentContext componentContext) {
         eventHandler = new ThreadedEventHandler(typedEventSubscribers, typedEventFactories);
         eventHandler.open();
     }
 
     @Deactivate
     protected void deactivate(ComponentContext componentContext) {
-        if (eventHandler != null) {
-            eventHandler.close();
-            eventHandler = null;
-        }
+        eventHandler.close();
     }
 
     @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
@@ -112,7 +112,9 @@ public class OSGiEventManager implements EventHandler {
     }
 
     @Override
-    public void handleEvent(org.osgi.service.event.Event osgiEvent) {
-        eventHandler.handleEvent(osgiEvent);
+    public void handleEvent(@Nullable Event osgiEvent) {
+        if (osgiEvent != null) {
+            eventHandler.handleEvent(osgiEvent);
+        }
     }
 }

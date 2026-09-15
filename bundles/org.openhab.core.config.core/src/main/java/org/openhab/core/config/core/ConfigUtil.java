@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNull;
@@ -47,11 +49,28 @@ import org.slf4j.LoggerFactory;
  *
  * @author Kai Kreuzer - Initial contribution
  * @author Thomas Höfer - Minor changes for type normalization based on config description
+ * @author Florian Hotze - Add support for environment variable substitution in config values
  */
 @NonNullByDefault
 public class ConfigUtil {
 
-    private static final String DEFAULT_LIST_DELIMITER = ",";
+    private static final Pattern DEFAULT_LIST_SPLITTER = Pattern.compile("(?<!\\\\),");
+    private static final Pattern ENV_PATTERN = Pattern.compile("\\$\\{ENV:([^}]+)}");
+
+    private static EnvProvider envProvider = System::getenv;
+
+    /**
+     * Setter for envProvider to allow overwriting it in tests.
+     *
+     * <p>
+     * This <strong>MUST NOT</strong> be called in production environments as it can break environment variable
+     * resolving.
+     * 
+     * @param provider the env provider to use for resolving environment variables
+     */
+    protected static void setEnvProvider(EnvProvider provider) {
+        envProvider = Objects.requireNonNull(provider, "provider must not be null");
+    }
 
     /**
      * Maps the provided (default) value of the given {@link ConfigDescriptionParameter} to the corresponding Java type.
@@ -61,14 +80,39 @@ public class ConfigUtil {
      *
      * @param parameter the {@link ConfigDescriptionParameter} which default value should be normalized (must not be
      *            null)
-     * @return the given value as the corresponding Java type or <code>null</code> if the value could not be converted
+     * @return the default value as the corresponding Java type, or
+     *         a <code>List</code> of the corresponding Java type if the parameter contains multiple values.
+     *         Returns <code>null</code> if the value could not be converted.
      */
     public static @Nullable Object getDefaultValueAsCorrectType(ConfigDescriptionParameter parameter) {
-        return getDefaultValueAsCorrectType(parameter.getName(), parameter.getType(), parameter.getDefault());
+        if (parameter.isMultiple()) {
+            if (parameter.getDefault() == null) {
+                return null;
+            }
+            List<Object> defaultValues = Stream.of(DEFAULT_LIST_SPLITTER.split(parameter.getDefault())) //
+                    .map(value -> value.trim().replace("\\,", ",")) //
+                    .filter(not(String::isEmpty)) //
+                    .map(value -> getDefaultValueAsCorrectType(parameter.getName(), parameter.getType(), value)) //
+                    .filter(Objects::nonNull) //
+                    .toList();
+
+            Integer multipleLimit = parameter.getMultipleLimit();
+            if (multipleLimit != null && defaultValues.size() > multipleLimit.intValue()) {
+                LoggerFactory.getLogger(ConfigUtil.class).warn(
+                        "Number of default values ({}) for parameter '{}' is greater than multiple limit ({})",
+                        defaultValues.size(), parameter.getName(), multipleLimit);
+            }
+            return defaultValues;
+        } else {
+            return getDefaultValueAsCorrectType(parameter.getName(), parameter.getType(), parameter.getDefault());
+        }
     }
 
     static @Nullable Object getDefaultValueAsCorrectType(String parameterName, Type parameterType,
-            String defaultValue) {
+            @Nullable String defaultValue) {
+        if (defaultValue == null) {
+            return null;
+        }
         try {
             switch (parameterType) {
                 case TEXT:
@@ -102,6 +146,28 @@ public class ConfigUtil {
     }
 
     /**
+     * Applies the default values from a give {@link ConfigDescription} to the given configuration {@link Map}.
+     * 
+     * @param configuration the configuration {@link Map} where the default values should be added (must not be null)
+     * @param configDescription the {@link ConfigDescription} where the default values are located (may be null, but
+     *            method won't have any effect then)
+     */
+    public static void applyDefaultConfiguration(Map<String, @Nullable Object> configuration,
+            @Nullable ConfigDescription configDescription) {
+        if (configDescription != null) {
+            for (ConfigDescriptionParameter parameter : configDescription.getParameters()) {
+                String defaultValue = parameter.getDefault();
+                if (defaultValue != null && configuration.get(parameter.getName()) == null) {
+                    Object value = ConfigUtil.getDefaultValueAsCorrectType(parameter);
+                    if (value != null) {
+                        configuration.put(parameter.getName(), value);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Applies the default values from a give {@link ConfigDescription} to the given {@link Configuration}.
      *
      * @param configuration the {@link Configuration} where the default values should be added (must not be null)
@@ -110,41 +176,9 @@ public class ConfigUtil {
      */
     public static void applyDefaultConfiguration(Configuration configuration,
             @Nullable ConfigDescription configDescription) {
-        if (configDescription != null) {
-            for (ConfigDescriptionParameter parameter : configDescription.getParameters()) {
-                String defaultValue = parameter.getDefault();
-                if (defaultValue != null && configuration.get(parameter.getName()) == null) {
-                    if (parameter.isMultiple()) {
-                        if (defaultValue.contains(DEFAULT_LIST_DELIMITER)) {
-                            List<Object> values = (List<Object>) Stream.of(defaultValue.split(DEFAULT_LIST_DELIMITER))
-                                    .map(String::trim) //
-                                    .filter(not(String::isEmpty)) //
-                                    .map(value -> ConfigUtil.getDefaultValueAsCorrectType(parameter.getName(),
-                                            parameter.getType(), value)) //
-                                    .filter(Objects::nonNull) //
-                                    .toList();
-                            Integer multipleLimit = parameter.getMultipleLimit();
-                            if (multipleLimit != null && values.size() > multipleLimit.intValue()) {
-                                LoggerFactory.getLogger(ConfigUtil.class).warn(
-                                        "Number of default values ({}) for parameter '{}' is greater than multiple limit ({})",
-                                        values.size(), parameter.getName(), multipleLimit);
-                            }
-                            configuration.put(parameter.getName(), values);
-                        } else {
-                            Object value = ConfigUtil.getDefaultValueAsCorrectType(parameter);
-                            if (value != null) {
-                                configuration.put(parameter.getName(), List.of(value));
-                            }
-                        }
-                    } else {
-                        Object value = ConfigUtil.getDefaultValueAsCorrectType(parameter);
-                        if (value != null) {
-                            configuration.put(parameter.getName(), value);
-                        }
-                    }
-                }
-            }
-        }
+        Map<String, @Nullable Object> properties = new HashMap<>(configuration.getProperties());
+        applyDefaultConfiguration(properties, configDescription);
+        configuration.setProperties(properties);
     }
 
     /**
@@ -173,7 +207,9 @@ public class ConfigUtil {
      * @return corresponding value as a valid type
      * @throws IllegalArgumentException if an invalid type has been given
      */
-    public static Object normalizeType(Object value, @Nullable ConfigDescriptionParameter configDescriptionParameter) {
+    @Nullable
+    public static Object normalizeType(@Nullable Object value,
+            @Nullable ConfigDescriptionParameter configDescriptionParameter) {
         if (configDescriptionParameter != null) {
             Normalizer normalizer = NormalizerFactory.getNormalizer(configDescriptionParameter);
             return normalizer.normalize(value);
@@ -187,7 +223,7 @@ public class ConfigUtil {
             return normalizeCollection(collection);
         }
         throw new IllegalArgumentException(
-                "Invalid type '{" + value.getClass().getCanonicalName() + "}' of configuration value!");
+                "Invalid type '{%s}' of configuration value!".formatted(value.getClass().getCanonicalName()));
     }
 
     /**
@@ -207,20 +243,21 @@ public class ConfigUtil {
      * @return the normalized configuration or null if given configuration was null
      * @throws IllegalArgumentException if given config description is null
      */
-    public static Map<String, Object> normalizeTypes(Map<String, Object> configuration,
+    public static Map<String, @Nullable Object> normalizeTypes(Map<String, @Nullable Object> configuration,
             List<ConfigDescription> configDescriptions) {
         if (configDescriptions.isEmpty()) {
             throw new IllegalArgumentException("Config description must not be empty.");
         }
 
-        Map<String, Object> convertedConfiguration = new HashMap<>();
+        Map<String, @Nullable Object> convertedConfiguration = new HashMap<>();
 
         Map<String, ConfigDescriptionParameter> configParams = new HashMap<>();
         for (int i = configDescriptions.size() - 1; i >= 0; i--) {
             configParams.putAll(configDescriptions.get(i).toParametersMap());
         }
-        for (Entry<String, Object> parameter : configuration.entrySet()) {
+        for (Entry<String, @Nullable Object> parameter : configuration.entrySet()) {
             String name = parameter.getKey();
+            @Nullable
             Object value = parameter.getValue();
             if (!isOSGiConfigParameter(name)) {
                 ConfigDescriptionParameter configDescriptionParameter = configParams.get(name);
@@ -239,7 +276,7 @@ public class ConfigUtil {
      * @param value the value to return as normalized type
      * @return corresponding value as a valid type
      */
-    public static Object normalizeType(Object value) {
+    public static @Nullable Object normalizeType(@Nullable Object value) {
         return normalizeType(value, null);
     }
 
@@ -258,8 +295,12 @@ public class ConfigUtil {
             final List<Object> lst = new ArrayList<>(collection.size());
             for (final Object it : collection) {
                 final Object normalized = normalizeType(it, null);
+                if (normalized == null) {
+                    continue;
+                }
+
                 lst.add(normalized);
-                if (normalized.getClass() != lst.get(0).getClass()) {
+                if (normalized.getClass() != lst.getFirst().getClass()) {
                     throw new IllegalArgumentException(
                             "Invalid configuration property. Heterogeneous collection value!");
                 }
@@ -276,5 +317,133 @@ public class ConfigUtil {
     private static boolean isOSGiConfigParameter(String name) {
         return Constants.OBJECTCLASS.equals(name) || ComponentConstants.COMPONENT_NAME.equals(name)
                 || ComponentConstants.COMPONENT_ID.equals(name);
+    }
+
+    /**
+     * Checks a string value for the variable patterns and resolves referenced variables.
+     *
+     * <p>
+     * Note: At the moment, only environment variables are supported.
+     * If no variable is referenced, the string value is returned as-is.
+     * If a referenced variable fails to resolve, a {@link IllegalArgumentException} is thrown.
+     *
+     * @param value the value to resolve
+     * @return the resolved value
+     * @throws IllegalArgumentException if a variable fails to resolve
+     */
+    private static String resolveVariables(String value) throws IllegalArgumentException {
+        final Matcher matcher = ENV_PATTERN.matcher(value);
+
+        return matcher.replaceAll(matchResult -> {
+            final String envVarName = matchResult.group(1);
+            final @Nullable String envVarValue = envProvider.get(envVarName);
+
+            if (envVarValue == null) {
+                throw new IllegalArgumentException(
+                        "Could not resolve environment variable '%s'!".formatted(envVarName));
+            }
+
+            // Safely escape the replacement string so '$' and '\' are treated as literals
+            return Matcher.quoteReplacement(envVarValue);
+        });
+    }
+
+    /**
+     * Resolves variables in the given value by replacing the variable patterns through the variable values.
+     *
+     * <p>
+     * The following rules are applied:
+     * <ol>
+     * <li>If the given value is a string, it is checked for variable patterns and referenced variables are
+     * resolved.</li>
+     * <li>If a variable fails to resolve, a {@link IllegalArgumentException} is thrown.</li>
+     * <li>If the value is a collection, this method is called for each element.</li>
+     * <li>If the value is neither a string nor a collection, it is returned as-is.</li>
+     * </ol>
+     *
+     * @param value the value to resolve
+     * @return the resolved value
+     * @throws IllegalArgumentException if a variable fails to resolve
+     */
+    public static Object resolveVariables(Object value) throws IllegalArgumentException {
+        if (value instanceof String stringValue) {
+            return resolveVariables(stringValue);
+        } else if (value instanceof Collection<?> collectionValue) {
+            final List<Object> entry = new ArrayList<>(collectionValue.size());
+            for (final Object it : collectionValue) {
+                final Object resolved = resolveVariables(it);
+                entry.add(resolved);
+            }
+            return entry;
+        }
+        return value;
+    }
+
+    /**
+     * Resolve variables in the given configuration.
+     *
+     * <p>
+     * Note that when substituting variables in non-TEXT values such as BOOLEAN, DECIMAL, etc., the config needs to be
+     * normalized.
+     *
+     * @param configuration the configuration to resolve variables in
+     * @return the resolved configuration
+     * @throws IllegalArgumentException if a variable fails to resolve
+     */
+    public static Map<String, @Nullable Object> resolveVariables(Map<String, @Nullable Object> configuration)
+            throws IllegalArgumentException {
+        final Map<String, @Nullable Object> resolvedProperties = new HashMap<>();
+        for (final Entry<String, @Nullable Object> entry : configuration.entrySet()) {
+            final @Nullable Object value = entry.getValue();
+            if (value != null) {
+                final Object resolved = resolveVariables(value);
+                resolvedProperties.put(entry.getKey(), resolved);
+            } else {
+                resolvedProperties.put(entry.getKey(), null);
+            }
+        }
+        return resolvedProperties;
+    }
+
+    /**
+     * Resolve variables in the given {@link Configuration}.
+     *
+     * <p>
+     * Note that when substituting variables in non-TEXT values such as BOOLEAN, DECIMAL, etc., the config needs to be
+     * normalized.
+     *
+     * @param configuration the configuration to resolve variables in
+     * @return the resolved configuration
+     * @throws IllegalArgumentException if a variable fails to resolve
+     */
+    public static Configuration resolveVariables(Configuration configuration) throws IllegalArgumentException {
+        return new Configuration(resolveVariables(configuration.getProperties()));
+    }
+
+    /**
+     * Resolve variables and normalize the results in the given {@link Configuration}.
+     *
+     * <p>
+     * Normalizing after the resolve step allows to use variable substitution for non-TEXT values such as BOOLEAN,
+     * DECIMAL, etc.
+     *
+     * @param configuration the configuration to resolve variables in and normalize afterward
+     * @param configDescriptions the configuration descriptions that should be applied (must not be empty).
+     * @return the normalized configuration
+     * @throws IllegalArgumentException if a variable fails to refresh or the given config description is null
+     */
+    public static Configuration resolveVariablesAndNormalizeTypes(Configuration configuration,
+            List<ConfigDescription> configDescriptions) throws IllegalArgumentException {
+        final Map<String, @Nullable Object> resolvedConfiguration = resolveVariables(configuration.getProperties());
+        return new Configuration(normalizeTypes(resolvedConfiguration, configDescriptions));
+    }
+
+    /**
+     * A provider for environment variables.
+     */
+    @FunctionalInterface
+    protected interface EnvProvider {
+        @Nullable
+        String get(String name);
     }
 }

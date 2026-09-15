@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -33,12 +33,15 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.common.ThreadFactoryBuilder;
 import org.openhab.core.config.discovery.AbstractDiscoveryService;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryService;
@@ -62,6 +65,15 @@ import org.slf4j.LoggerFactory;
 
 /**
  * This is a {@link DiscoveryService} implementation, which can find SDDP devices in the network.
+ * <p>
+ * Simple Device Discovery Protocol (SDDP) is a simple multicast discovery protocol implemented
+ * by many "smart home" devices to allow a controlling agent to easily discover and connect to
+ * devices on a local subnet.
+ * <p>
+ * SDDP was created by Control4, and is quite similar to UPnP's standard Simple Service Discovery
+ * Protocol (SSDP), and it serves a virtually identical purpose. SDDP is not a standard protocol
+ * and it is not publicly documented.
+ * <p>
  * Support for bindings can be achieved by implementing and registering a {@link SddpDiscoveryParticipant}.
  * Support for finders can be achieved by implementing and registering a {@link SddpDeviceParticipant}.
  *
@@ -97,6 +109,7 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
 
     private boolean closing = false;
 
+    private ScheduledExecutorService longRunningTaskExecutor;
     private @Nullable Future<?> listenBackgroundMulticastTask = null;
     private @Nullable Future<?> listenActiveScanUnicastTask = null;
     private @Nullable ScheduledFuture<?> purgeExpiredDevicesTask = null;
@@ -107,6 +120,12 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
             final @Reference TranslationProvider i18nProvider, //
             final @Reference LocaleProvider localeProvider) {
         super((int) SEARCH_LISTEN_DURATION.getSeconds());
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(2, ThreadFactoryBuilder.create()
+                .withName("SDDP-discovery").withDaemonThreads(true).withUncaughtExceptionHandler((t, e) -> {
+                    logger.debug("SDDP discovery service encountered an unexpected exception", e);
+                }).build());
+        executor.allowCoreThreadTimeOut(true);
+        this.longRunningTaskExecutor = executor;
 
         this.networkAddressService = networkAddressService;
         this.i18nProvider = i18nProvider;
@@ -131,9 +150,7 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
         foundDevicesCache.stream().filter(d -> !d.isExpired()).forEach(d -> {
             DiscoveryResult result = participant.createResult(d);
             if (result != null) {
-                DiscoveryResult localizedResult = getLocalizedDiscoveryResult(result,
-                        FrameworkUtil.getBundle(participant.getClass()));
-                thingDiscovered(localizedResult);
+                thingDiscovered(result, FrameworkUtil.getBundle(participant.getClass()));
             }
         });
     }
@@ -159,7 +176,7 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
         if (!data.isBlank()) {
             List<String> lines = data.lines().toList();
             if (lines.size() > 1) {
-                String statement = lines.get(0).strip();
+                String statement = lines.getFirst().strip();
                 boolean offline = statement.startsWith(NOTIFY_OFFLINE_HEADER);
                 if (offline || statement.startsWith(NOTIFY_ALIVE_HEADER) || statement.startsWith(NOTIFY_IDENTIFY_HEADER)
                         || statement.startsWith(SEARCH_RESPONSE_HEADER)) {
@@ -193,6 +210,7 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
 
         cancelTask(purgeExpiredDevicesTask);
         purgeExpiredDevicesTask = null;
+        longRunningTaskExecutor.shutdownNow();
     }
 
     @Override
@@ -330,19 +348,19 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
         Future<?> multicastTask = listenBackgroundMulticastTask;
         if (multicastTask != null && !multicastTask.isDone()) {
             multicastTask.cancel(true);
-            listenBackgroundMulticastTask = scheduler.submit(() -> listenBackGroundMulticast());
+            listenBackgroundMulticastTask = longRunningTaskExecutor.submit(() -> listenBackGroundMulticast());
         }
         Future<?> unicastTask = listenActiveScanUnicastTask;
         if (unicastTask != null && !unicastTask.isDone()) {
             unicastTask.cancel(true);
-            listenActiveScanUnicastTask = scheduler.submit(() -> listenActiveScanUnicast());
+            listenActiveScanUnicastTask = longRunningTaskExecutor.submit(() -> listenActiveScanUnicast());
         }
     }
 
     /**
      * Process the {@link DatagramPacket} content by trying to create an {@link SddpDevice} and eventually adding it to
      * the foundDevicesCache, and if so, then notifying all listeners.
-     * 
+     *
      * @param packet a datagram packet that arrived over the network.
      */
     private synchronized void processPacket(DatagramPacket packet) {
@@ -371,9 +389,7 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
                 discoveryParticipants.forEach(p -> {
                     DiscoveryResult discoveryResult = p.createResult(device);
                     if (discoveryResult != null) {
-                        DiscoveryResult localizedResult = getLocalizedDiscoveryResult(discoveryResult,
-                                FrameworkUtil.getBundle(p.getClass()));
-                        thingDiscovered(localizedResult);
+                        thingDiscovered(discoveryResult, FrameworkUtil.getBundle(p.getClass()));
                     }
                 });
                 deviceParticipants.forEach(f -> f.deviceAdded(device));
@@ -416,7 +432,7 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
     protected void startBackgroundDiscovery() {
         Future<?> task = listenBackgroundMulticastTask;
         if (task == null || task.isDone()) {
-            listenBackgroundMulticastTask = scheduler.submit(() -> listenBackGroundMulticast());
+            listenBackgroundMulticastTask = longRunningTaskExecutor.submit(() -> listenBackGroundMulticast());
         }
     }
 
@@ -427,7 +443,7 @@ public class SddpDiscoveryService extends AbstractDiscoveryService
     protected void startScan() {
         Future<?> task = listenActiveScanUnicastTask;
         if (task == null || task.isDone()) {
-            listenActiveScanUnicastTask = scheduler.submit(() -> listenActiveScanUnicast());
+            listenActiveScanUnicastTask = longRunningTaskExecutor.submit(() -> listenActiveScanUnicast());
         }
     }
 

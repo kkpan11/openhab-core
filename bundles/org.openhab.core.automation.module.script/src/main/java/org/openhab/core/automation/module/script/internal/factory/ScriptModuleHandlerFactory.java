@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,6 +16,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+
+import javax.script.ScriptException;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -100,6 +102,11 @@ public class ScriptModuleHandlerFactory extends BaseModuleHandlerFactory impleme
         if (handler != null) {
             logger.debug("Resetting script engine for script {}", engineIdentifier);
             handler.resetScriptEngine();
+            try {
+                handler.compile();
+            } catch (ScriptException e) {
+                logger.error("Failed to recompile script for rule {}: {}", handler.getRuleUID(), e.getMessage());
+            }
         }
     }
 }

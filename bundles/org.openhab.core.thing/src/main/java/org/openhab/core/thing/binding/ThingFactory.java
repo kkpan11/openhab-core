@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -41,6 +41,7 @@ import org.slf4j.LoggerFactory;
  *         values
  * @author Thomas Höfer - added thing and thing type properties
  * @author Chris Jackson - Added properties, label, description
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public class ThingFactory {
@@ -91,7 +92,8 @@ public class ThingFactory {
         List<Channel> channels = ThingFactoryHelper.createChannels(thingType, thingUID, configDescriptionRegistry);
 
         return createThingBuilder(thingType, thingUID).withConfiguration(configuration).withChannels(channels)
-                .withProperties(thingType.getProperties()).withBridge(bridgeUID).build();
+                .withProperties(thingType.getProperties()).withBridge(bridgeUID)
+                .withSemanticEquipmentTag(thingType.getSemanticEquipmentTag()).build();
     }
 
     public static @Nullable Thing createThing(ThingUID thingUID, Configuration configuration,

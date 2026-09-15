@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,7 +16,8 @@ import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 import static org.openhab.core.persistence.extensions.TestPersistenceService.*;
 
 import java.time.ZoneId;
@@ -44,15 +45,22 @@ import org.openhab.core.items.GroupItem;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.items.ItemUtil;
 import org.openhab.core.library.CoreItemFactory;
+import org.openhab.core.library.dimension.EnergyPrice;
 import org.openhab.core.library.types.ArithmeticGroupFunction;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.QuantityType;
+import org.openhab.core.library.unit.CurrencyUnits;
 import org.openhab.core.library.unit.SIUnits;
 import org.openhab.core.library.unit.Units;
 import org.openhab.core.persistence.HistoricItem;
+import org.openhab.core.persistence.PersistenceManager;
 import org.openhab.core.persistence.PersistenceService;
 import org.openhab.core.persistence.PersistenceServiceRegistry;
+import org.openhab.core.persistence.extensions.PersistenceExtensions.RiemannType;
+import org.openhab.core.persistence.registry.PersistenceServiceConfigurationRegistry;
 import org.openhab.core.types.State;
+import org.openhab.core.types.TimeSeries;
+import org.openhab.core.types.TimeSeries.Policy;
 
 /**
  * @author Kai Kreuzer - Initial contribution
@@ -62,8 +70,12 @@ import org.openhab.core.types.State;
  * @author Mark Herwege - Changed return types to State for some interval methods to also return unit
  * @author Mark Herwege - Extended for future dates
  * @author Mark Herwege - lastChange and nextChange methods
- * @author Mark Herwege - handle persisted GroupItem with QuantityType
- * @author Mark Herwege - add median methods
+ * @author Mark Herwege - Handle persisted GroupItem with QuantityType
+ * @author Mark Herwege - Add median methods
+ * @author Mark Herwege - Implement aliases
+ * @author Mark Herwege - Add Riemann sum methods
+ * @author Mark Herwege - Make tests less impacted by the current time for slow builds, improves test reliability
+ * @author Mark Herwege - use base unit for calculations and results
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -74,22 +86,31 @@ public class PersistenceExtensionsTest {
     public static final String TEST_QUANTITY_NUMBER = "testQuantityNumber";
     public static final String TEST_GROUP_QUANTITY_NUMBER = "testGroupQuantityNumber";
     public static final String TEST_SWITCH = "testSwitch";
+    public static final String TEST_ENERGYPRICE_QUANTITY_NUMBER = "testEnergyPriceQuantityItem";
 
+    private @Mock @NonNullByDefault({}) PersistenceManager persistenceManagerMock;
     private @Mock @NonNullByDefault({}) ItemRegistry itemRegistryMock;
     private @Mock @NonNullByDefault({}) UnitProvider unitProviderMock;
     private @Mock @NonNullByDefault({}) TimeZoneProvider timeZoneProviderMock;
 
-    private @NonNullByDefault({}) GenericItem numberItem, quantityItem, groupQuantityItem, switchItem;
+    private @Mock @NonNullByDefault({}) PersistenceServiceConfigurationRegistry persistenceServiceConfigurationRegistryMock;
+
+    private @NonNullByDefault({}) GenericItem numberItem, quantityItem, groupQuantityItem, switchItem,
+            energyPriceQuantityItem;
 
     @BeforeEach
     public void setUp() {
         when(unitProviderMock.getUnit(Temperature.class)).thenReturn(SIUnits.CELSIUS);
+        when(unitProviderMock.getUnit(EnergyPrice.class)).thenReturn(CurrencyUnits.BASE_ENERGY_PRICE);
 
         CoreItemFactory itemFactory = new CoreItemFactory(unitProviderMock);
         numberItem = itemFactory.createItem(CoreItemFactory.NUMBER, TEST_NUMBER);
         quantityItem = itemFactory.createItem(CoreItemFactory.NUMBER + ItemUtil.EXTENSION_SEPARATOR + "Temperature",
                 TEST_QUANTITY_NUMBER);
         switchItem = itemFactory.createItem(CoreItemFactory.SWITCH, TEST_SWITCH);
+        energyPriceQuantityItem = itemFactory.createItem(
+                CoreItemFactory.NUMBER + ItemUtil.EXTENSION_SEPARATOR + "EnergyPrice",
+                TEST_ENERGYPRICE_QUANTITY_NUMBER);
 
         GenericItem baseItem = itemFactory
                 .createItem(CoreItemFactory.NUMBER + ItemUtil.EXTENSION_SEPARATOR + "Temperature", "testGroupBaseItem");
@@ -101,15 +122,18 @@ public class PersistenceExtensionsTest {
         quantityItem.setState(new QuantityType<Temperature>(STATE, SIUnits.CELSIUS));
         groupQuantityItem.setState(new QuantityType<Temperature>(STATE, SIUnits.CELSIUS));
         switchItem.setState(SWITCH_STATE);
+        energyPriceQuantityItem.setState(new QuantityType<EnergyPrice>(STATE, CurrencyUnits.BASE_ENERGY_PRICE));
 
         when(itemRegistryMock.get(TEST_NUMBER)).thenReturn(numberItem);
         when(itemRegistryMock.get(TEST_QUANTITY_NUMBER)).thenReturn(quantityItem);
         when(itemRegistryMock.get(TEST_SWITCH)).thenReturn(switchItem);
         when(itemRegistryMock.get(TEST_GROUP_QUANTITY_NUMBER)).thenReturn(groupQuantityItem);
+        when(itemRegistryMock.get(TEST_ENERGYPRICE_QUANTITY_NUMBER)).thenReturn(energyPriceQuantityItem);
 
+        when(persistenceServiceConfigurationRegistryMock.get(anyString())).thenReturn(null);
         when(timeZoneProviderMock.getTimeZone()).thenReturn(ZoneId.systemDefault());
 
-        new PersistenceExtensions(new PersistenceServiceRegistry() {
+        new PersistenceExtensions(persistenceManagerMock, new PersistenceServiceRegistry() {
             private final PersistenceService testPersistenceService = new TestPersistenceService(itemRegistryMock);
 
             @Override
@@ -133,7 +157,7 @@ public class PersistenceExtensionsTest {
             public @Nullable PersistenceService get(@Nullable String serviceId) {
                 return TestPersistenceService.SERVICE_ID.equals(serviceId) ? testPersistenceService : null;
             }
-        }, timeZoneProviderMock);
+        }, persistenceServiceConfigurationRegistryMock, timeZoneProviderMock);
     }
 
     @Test
@@ -328,6 +352,15 @@ public class PersistenceExtensionsTest {
                 SERVICE_ID);
         assertNotNull(historicItem);
         assertEquals(switchValue(SWITCH_ON_INTERMEDIATE_3), historicItem.getState());
+    }
+
+    @Test
+    public void testPersistedStateEnergyPriceQuantityType() {
+        HistoricItem historicItem = PersistenceExtensions.persistedState(energyPriceQuantityItem,
+                ZonedDateTime.of(HISTORIC_END, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(instanceOf(QuantityType.class)));
+        assertEquals(new QuantityType<>(value(HISTORIC_END), CurrencyUnits.BASE_ENERGY_PRICE), historicItem.getState());
     }
 
     @Test
@@ -618,6 +651,17 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
+    public void testMaximumBetweenEnergyPriceQuantityType() {
+        HistoricItem historicItem = PersistenceExtensions.maximumBetween(energyPriceQuantityItem,
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(instanceOf(QuantityType.class)));
+        assertThat(historicItem.getState(),
+                is(new QuantityType<>(value(HISTORIC_INTERMEDIATE_VALUE_2), CurrencyUnits.BASE_ENERGY_PRICE)));
+    }
+
+    @Test
     public void testMinimumSinceDecimalType() {
         HistoricItem historicItem = PersistenceExtensions.minimumSince(numberItem,
                 ZonedDateTime.of(BEFORE_START, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
@@ -879,11 +923,21 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
+    public void testMinimumBetweenEnergyPriceQuantityType() {
+        HistoricItem historicItem = PersistenceExtensions.minimumBetween(energyPriceQuantityItem,
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(instanceOf(QuantityType.class)));
+        assertThat(historicItem.getState(),
+                is(new QuantityType<>(value(HISTORIC_INTERMEDIATE_VALUE_1), CurrencyUnits.BASE_ENERGY_PRICE)));
+    }
+
+    @Test
     public void testVarianceSinceDecimalType() {
         ZonedDateTime startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         double expected = DoubleStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END)
                         .mapToDouble(i -> Double.valueOf(i)), DoubleStream.of(STATE.doubleValue()))
@@ -904,8 +958,7 @@ public class PersistenceExtensionsTest {
     public void testVarianceUntilDecimalType() {
         ZonedDateTime endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(null, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         double expected = DoubleStream
                 .concat(DoubleStream.of(STATE.doubleValue()),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3)
@@ -929,12 +982,10 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage1 = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
-
+        double expectedAverage1 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         double expected = IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage1, 2)).sum()
                 / (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1 + 1);
-
         State variance = PersistenceExtensions.varianceBetween(numberItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         DecimalType dt = variance.as(DecimalType.class);
@@ -943,12 +994,10 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage2 = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        double expectedAverage2 = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         expected = IntStream.rangeClosed(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage2, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_4 - FUTURE_INTERMEDIATE_VALUE_3 + 1);
-
         variance = PersistenceExtensions.varianceBetween(numberItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         dt = variance.as(DecimalType.class);
@@ -957,14 +1006,12 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage3 = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage3 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         expected = IntStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3))
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage3, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_3 - FUTURE_START + 1 + HISTORIC_END - HISTORIC_INTERMEDIATE_VALUE_1 + 1);
-
         variance = PersistenceExtensions.varianceBetween(numberItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         dt = variance.as(DecimalType.class);
@@ -980,8 +1027,7 @@ public class PersistenceExtensionsTest {
     public void testVarianceSinceQuantityType() {
         ZonedDateTime startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         double expected = DoubleStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END)
                         .mapToDouble(i -> Double.valueOf(i)), DoubleStream.of(STATE.doubleValue()))
@@ -1003,8 +1049,7 @@ public class PersistenceExtensionsTest {
     public void testVarianceUntilQuantityType() {
         ZonedDateTime endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(null, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         double expected = DoubleStream
                 .concat(DoubleStream.of(STATE.doubleValue()),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3)
@@ -1029,12 +1074,10 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage1 = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
-
+        double expectedAverage1 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         double expected = IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage1, 2)).sum()
                 / (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1 + 1);
-
         State variance = PersistenceExtensions.varianceBetween(quantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         QuantityType<?> qt = variance.as(QuantityType.class);
@@ -1044,12 +1087,10 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage2 = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        double expectedAverage2 = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         expected = IntStream.rangeClosed(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage2, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_4 - FUTURE_INTERMEDIATE_VALUE_3 + 1);
-
         variance = PersistenceExtensions.varianceBetween(quantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         qt = variance.as(QuantityType.class);
@@ -1059,14 +1100,12 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage3 = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage3 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         expected = IntStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3))
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage3, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_3 - FUTURE_START + 1 + HISTORIC_END - HISTORIC_INTERMEDIATE_VALUE_1 + 1);
-
         variance = PersistenceExtensions.varianceBetween(quantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         qt = variance.as(QuantityType.class);
@@ -1083,8 +1122,7 @@ public class PersistenceExtensionsTest {
     public void testVarianceSinceGroupQuantityType() {
         ZonedDateTime startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         double expected = DoubleStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END)
                         .mapToDouble(i -> Double.valueOf(i)), DoubleStream.of(STATE.doubleValue()))
@@ -1106,8 +1144,7 @@ public class PersistenceExtensionsTest {
     public void testVarianceUntilGroupQuantityType() {
         ZonedDateTime endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(null, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         double expected = DoubleStream
                 .concat(DoubleStream.of(STATE.doubleValue()),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3)
@@ -1132,12 +1169,10 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage1 = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
-
+        double expectedAverage1 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         double expected = IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage1, 2)).sum()
                 / (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1 + 1);
-
         State variance = PersistenceExtensions.varianceBetween(groupQuantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         QuantityType<?> qt = variance.as(QuantityType.class);
@@ -1147,12 +1182,10 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage2 = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        double expectedAverage2 = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         expected = IntStream.rangeClosed(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage2, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_4 - FUTURE_INTERMEDIATE_VALUE_3 + 1);
-
         variance = PersistenceExtensions.varianceBetween(groupQuantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         qt = variance.as(QuantityType.class);
@@ -1162,14 +1195,12 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage3 = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage3 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         expected = IntStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3))
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage3, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_3 - FUTURE_START + 1 + HISTORIC_END - HISTORIC_INTERMEDIATE_VALUE_1 + 1);
-
         variance = PersistenceExtensions.varianceBetween(groupQuantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(variance);
         qt = variance.as(QuantityType.class);
@@ -1183,11 +1214,31 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
+    public void testVarianceBetweenEnergyPriceQuantityType() {
+        ZonedDateTime startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        double expectedAverage1 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+
+        double expected = IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2)
+                .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage1, 2)).sum()
+                / (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1 + 1);
+
+        State variance = PersistenceExtensions.varianceBetween(energyPriceQuantityItem, startStored, endStored,
+                SERVICE_ID);
+        assertNotNull(variance);
+        QuantityType<?> qt = variance.as(QuantityType.class);
+        assertNotNull(qt);
+        assertThat(qt.doubleValue(), is(closeTo(expected, 0.01)));
+        assertEquals(CurrencyUnits.BASE_ENERGY_PRICE.multiply(CurrencyUnits.BASE_ENERGY_PRICE), qt.getUnit());
+    }
+
+    @Test
     public void testDeviationSinceDecimalType() {
         ZonedDateTime startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         double expected = Math.sqrt(DoubleStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END)
                         .mapToDouble(i -> Double.valueOf(i)), DoubleStream.of(STATE.doubleValue()))
@@ -1208,8 +1259,7 @@ public class PersistenceExtensionsTest {
     public void testDeviationUntilDecimalType() {
         ZonedDateTime endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(null, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         double expected = Math.sqrt(DoubleStream
                 .concat(DoubleStream.of(STATE.doubleValue()),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3)
@@ -1233,8 +1283,7 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         double expected = Math.sqrt(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2)
                 .mapToDouble(i -> Double.parseDouble(Integer.toString(i))).map(d -> Math.pow(d - expectedAverage, 2))
                 .sum() / (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1 + 1));
@@ -1246,12 +1295,10 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage2 = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        double expectedAverage2 = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         expected = Math.sqrt(IntStream.rangeClosed(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage2, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_4 - FUTURE_INTERMEDIATE_VALUE_3 + 1));
-
         deviation = PersistenceExtensions.deviationBetween(numberItem, startStored, endStored, SERVICE_ID);
         assertNotNull(deviation);
         dt = deviation.as(DecimalType.class);
@@ -1260,14 +1307,12 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage3 = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage3 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         expected = Math.sqrt(IntStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3))
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage3, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_3 - FUTURE_START + 1 + HISTORIC_END - HISTORIC_INTERMEDIATE_VALUE_1 + 1));
-
         deviation = PersistenceExtensions.deviationBetween(numberItem, startStored, endStored, SERVICE_ID);
         assertNotNull(deviation);
         dt = deviation.as(DecimalType.class);
@@ -1283,8 +1328,7 @@ public class PersistenceExtensionsTest {
     public void testDeviationSinceQuantityType() {
         ZonedDateTime startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         double expected = Math.sqrt(DoubleStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END)
                         .mapToDouble(i -> Double.valueOf(i)), DoubleStream.of(STATE.doubleValue()))
@@ -1306,8 +1350,7 @@ public class PersistenceExtensionsTest {
     public void testDeviationUntilQuantityType() {
         ZonedDateTime endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(null, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         double expected = Math.sqrt(DoubleStream
                 .concat(DoubleStream.of(STATE.doubleValue()),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3)
@@ -1332,8 +1375,7 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         double expected = Math.sqrt(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2)
                 .mapToDouble(i -> Double.parseDouble(Integer.toString(i))).map(d -> Math.pow(d - expectedAverage, 2))
                 .sum() / (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1 + 1));
@@ -1346,12 +1388,10 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage2 = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        double expectedAverage2 = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         expected = Math.sqrt(IntStream.rangeClosed(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage2, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_4 - FUTURE_INTERMEDIATE_VALUE_3 + 1));
-
         deviation = PersistenceExtensions.deviationBetween(quantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(deviation);
         qt = deviation.as(QuantityType.class);
@@ -1361,14 +1401,12 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage3 = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage3 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         expected = Math.sqrt(IntStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3))
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage3, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_3 - FUTURE_START + 1 + HISTORIC_END - HISTORIC_INTERMEDIATE_VALUE_1 + 1));
-
         deviation = PersistenceExtensions.deviationBetween(quantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(deviation);
         qt = deviation.as(QuantityType.class);
@@ -1385,8 +1423,7 @@ public class PersistenceExtensionsTest {
     public void testDeviationSinceGroupQuantityType() {
         ZonedDateTime startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         double expected = Math.sqrt(DoubleStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END)
                         .mapToDouble(i -> Double.valueOf(i)), DoubleStream.of(STATE.doubleValue()))
@@ -1408,8 +1445,7 @@ public class PersistenceExtensionsTest {
     public void testDeviationUntilGroupQuantityType() {
         ZonedDateTime endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(null, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         double expected = Math.sqrt(DoubleStream
                 .concat(DoubleStream.of(STATE.doubleValue()),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3)
@@ -1434,8 +1470,7 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expectedAverage = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
-
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         double expected = Math.sqrt(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2)
                 .mapToDouble(i -> Double.parseDouble(Integer.toString(i))).map(d -> Math.pow(d - expectedAverage, 2))
                 .sum() / (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1 + 1));
@@ -1448,12 +1483,10 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage2 = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        double expectedAverage2 = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         expected = Math.sqrt(IntStream.rangeClosed(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4)
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage2, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_4 - FUTURE_INTERMEDIATE_VALUE_3 + 1));
-
         deviation = PersistenceExtensions.deviationBetween(groupQuantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(deviation);
         qt = deviation.as(QuantityType.class);
@@ -1463,14 +1496,12 @@ public class PersistenceExtensionsTest {
 
         startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expectedAverage3 = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        double expectedAverage3 = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         expected = Math.sqrt(IntStream
                 .concat(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_END),
                         IntStream.rangeClosed(FUTURE_START, FUTURE_INTERMEDIATE_VALUE_3))
                 .mapToDouble(i -> Double.valueOf(i)).map(d -> Math.pow(d - expectedAverage3, 2)).sum()
                 / (FUTURE_INTERMEDIATE_VALUE_3 - FUTURE_START + 1 + HISTORIC_END - HISTORIC_INTERMEDIATE_VALUE_1 + 1));
-
         deviation = PersistenceExtensions.deviationBetween(groupQuantityItem, startStored, endStored, SERVICE_ID);
         assertNotNull(deviation);
         qt = deviation.as(QuantityType.class);
@@ -1484,9 +1515,317 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
+    public void testDeviationBetweenEnergyPriceQuantityType() {
+        ZonedDateTime startStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        double expectedAverage = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+
+        double expected = Math.sqrt(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2)
+                .mapToDouble(i -> Double.parseDouble(Integer.toString(i))).map(d -> Math.pow(d - expectedAverage, 2))
+                .sum() / (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1 + 1));
+        State deviation = PersistenceExtensions.deviationBetween(energyPriceQuantityItem, startStored, endStored,
+                SERVICE_ID);
+        assertNotNull(deviation);
+        QuantityType<?> qt = deviation.as(QuantityType.class);
+        assertNotNull(qt);
+        assertEquals(expected, qt.doubleValue(), 0.01);
+        assertEquals(CurrencyUnits.BASE_ENERGY_PRICE, qt.getUnit());
+    }
+
+    @Test
+    public void testRiemannSumBetweenDecimalType() {
+        RiemannType type = RiemannType.LEFT;
+
+        ZonedDateTime beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        double expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2, type);
+        State sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        DecimalType dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertEquals(expected, dt.doubleValue(), 0.01);
+
+        beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
+
+        beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
+
+        // default persistence service
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type);
+        assertNull(sum);
+
+        type = RiemannType.RIGHT;
+
+        beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertEquals(expected, dt.doubleValue(), 0.01);
+
+        beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
+
+        beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
+
+        // default persistence service
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type);
+        assertNull(sum);
+
+        type = RiemannType.TRAPEZOIDAL;
+
+        beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertEquals(expected, dt.doubleValue(), 0.01);
+
+        beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
+
+        beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
+
+        // default persistence service
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type);
+        assertNull(sum);
+
+        type = RiemannType.MIDPOINT;
+
+        beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertEquals(expected, dt.doubleValue(), 0.01);
+
+        beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
+
+        beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+        expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3, type);
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type, SERVICE_ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
+
+        // default persistence service
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, beginStored, endStored, type);
+        assertNull(sum);
+    }
+
+    @Test
+    public void testRiemannSumBetweenQuantityType() {
+        for (RiemannType type : RiemannType.values()) {
+            ZonedDateTime beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
+                    ZoneId.systemDefault());
+            ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
+                    ZoneId.systemDefault());
+            double expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2, type);
+            State sum = PersistenceExtensions.riemannSumBetween(quantityItem, beginStored, endStored, type, SERVICE_ID);
+            assertNotNull(sum);
+            QuantityType<?> qt = sum.as(QuantityType.class);
+            assertNotNull(qt);
+            assertThat(qt.doubleValue(), is(closeTo(expected, 0.01)));
+            assertEquals(SIUnits.CELSIUS.multiply(Units.SECOND), qt.getUnit());
+
+            beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+            endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+            expected = testRiemannSum(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4, type);
+            sum = PersistenceExtensions.riemannSumBetween(quantityItem, beginStored, endStored, type, SERVICE_ID);
+            assertNotNull(sum);
+            qt = sum.as(QuantityType.class);
+            assertNotNull(qt);
+            assertThat(qt.doubleValue(), is(closeTo(expected, 0.01)));
+            assertEquals(SIUnits.CELSIUS.multiply(Units.SECOND), qt.getUnit());
+
+            beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+            endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
+            expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3, type);
+            sum = PersistenceExtensions.riemannSumBetween(quantityItem, beginStored, endStored, type, SERVICE_ID);
+            assertNotNull(sum);
+            qt = sum.as(QuantityType.class);
+            assertNotNull(qt);
+            assertThat(qt.doubleValue(), is(closeTo(expected, 0.01)));
+            assertEquals(SIUnits.CELSIUS.multiply(Units.SECOND), qt.getUnit());
+
+            // default persistence service
+            sum = PersistenceExtensions.riemannSumBetween(quantityItem, beginStored, endStored, type);
+            assertNull(sum);
+        }
+    }
+
+    @Test
+    public void testRiemannSumBetweenDecimalTypeIrregularTimespans() {
+        RiemannType type = RiemannType.LEFT;
+
+        ZonedDateTime now = ZonedDateTime.now();
+        int historicHours = 27;
+        int futureHours = 27;
+
+        // Persistence will contain following entries:
+        // 0 - 27 hours back in time
+        // 100 - 26 hours back in time
+        // 0 - 25 hours back in time
+        // 50 - 2 hours back in time
+        // 0 - 1 hour back in time
+        // 0 - 1 hour forward in time
+        // 50 - 2 hours forward in time
+        // 0 - 3 hours forward in time
+        // 100 - 25 hours forward in time
+        // 0 - 26 hour forward in time
+        createTestCachedValuesPersistenceService(now, historicHours, futureHours);
+
+        // Testing that riemannSum calculates the correct Riemann sum for the last half hour without persisted value in
+        // that horizon
+        State sum = PersistenceExtensions.riemannSumSince(numberItem, now.minusMinutes(30), type,
+                TestCachedValuesPersistenceService.ID);
+        assertNotNull(sum);
+        DecimalType dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(0.0, 0.01)));
+
+        // Testing that riemannSum calculates the correct Riemann sum from the last 27 hours to the next 27 hours
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, now.minusHours(historicHours),
+                now.plusHours(futureHours), type, TestCachedValuesPersistenceService.ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(100.0 * 3600 + 50.0 * 3600 + 100.0 * 3600 + 50.0 * 3600, 0.01)));
+
+        // Testing that riemannSum calculates the correct Riemann sum from the last 24 hours to the next 24 hours
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, now.minusHours(historicHours).plusHours(3),
+                now.plusHours(futureHours).minusHours(3), type, TestCachedValuesPersistenceService.ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(50.0 * 3600 + 50.0 * 3600, 0.01)));
+
+        // Testing that riemannSum calculates the correct Riemann sum from the last 30 minutes to the next 30 minutes
+        sum = PersistenceExtensions.riemannSumBetween(numberItem, now.minusMinutes(30), now.plusMinutes(30), type,
+                TestCachedValuesPersistenceService.ID);
+        assertNotNull(sum);
+        dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(0, 0.01)));
+    }
+
+    @Test
+    public void testRiemannSumBetweenNoPersistedValues() {
+        RiemannType type = RiemannType.LEFT;
+
+        ZonedDateTime now = ZonedDateTime.now();
+        int historicHours = 27;
+        int futureHours = 0;
+
+        // Persistence will contain following entries:
+        // 0 - 27 hours back in time
+        // 100 - 26 hours back in time
+        // 0 - 25 hours back in time
+        // 50 - 2 hours back in time
+        // 0 - 1 hour back in time
+        createTestCachedValuesPersistenceService(now, historicHours, futureHours);
+
+        // Testing that average calculates the correct average for the half hour without persisted values in
+        // that horizon
+        State sum = PersistenceExtensions.riemannSumBetween(numberItem, now.minusMinutes(105), now.minusMinutes(75),
+                type, TestCachedValuesPersistenceService.ID);
+        assertNotNull(sum);
+        DecimalType dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(50.0 * 1800, 0.01)));
+    }
+
+    @Test
+    public void testRiemannSumBetweenZeroDuration() {
+        ZonedDateTime now = ZonedDateTime.now();
+        State sum = PersistenceExtensions.riemannSumBetween(numberItem, now, now, SERVICE_ID);
+        assertNotNull(sum);
+        DecimalType dt = sum.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo(0, 0.01)));
+    }
+
+    @Test
+    public void testRiemannSumBetweenEnergyPriceQuantityType() {
+        for (RiemannType type : RiemannType.values()) {
+            ZonedDateTime beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
+                    ZoneId.systemDefault());
+            ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
+                    ZoneId.systemDefault());
+            double expected = testRiemannSum(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2, type);
+            State sum = PersistenceExtensions.riemannSumBetween(energyPriceQuantityItem, beginStored, endStored, type,
+                    SERVICE_ID);
+
+            assertNotNull(sum);
+            QuantityType<?> qt = sum.as(QuantityType.class);
+            assertNotNull(qt);
+            assertThat(qt.doubleValue(), is(closeTo(expected, 0.01)));
+            assertEquals(CurrencyUnits.BASE_ENERGY_PRICE.multiply(Units.SECOND), qt.getUnit());
+        }
+    }
+
+    @Test
     public void testAverageSinceDecimalType() {
         ZonedDateTime start = ZonedDateTime.of(BEFORE_START, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = average(BEFORE_START, null);
+        double expected = testAverage(BEFORE_START, null);
         State average = PersistenceExtensions.averageSince(numberItem, start, SERVICE_ID);
         assertNotNull(average);
         DecimalType dt = average.as(DecimalType.class);
@@ -1494,7 +1833,7 @@ public class PersistenceExtensionsTest {
         assertEquals(expected, dt.doubleValue(), 0.01);
 
         start = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
+        expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         average = PersistenceExtensions.averageSince(numberItem, start, SERVICE_ID);
         assertNotNull(average);
         dt = average.as(DecimalType.class);
@@ -1509,7 +1848,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testAverageUntilDecimalType() {
         ZonedDateTime end = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = average(null, FUTURE_INTERMEDIATE_VALUE_3);
+        double expected = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         State average = PersistenceExtensions.averageUntil(numberItem, end, SERVICE_ID);
         assertNotNull(average);
         DecimalType dt = average.as(DecimalType.class);
@@ -1527,8 +1866,7 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-
-        double expected = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+        double expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         State average = PersistenceExtensions.averageBetween(numberItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(average);
         DecimalType dt = average.as(DecimalType.class);
@@ -1537,8 +1875,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        expected = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         average = PersistenceExtensions.averageBetween(numberItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(average);
         dt = average.as(DecimalType.class);
@@ -1547,8 +1884,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         average = PersistenceExtensions.averageBetween(numberItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(average);
         dt = average.as(DecimalType.class);
@@ -1556,14 +1892,14 @@ public class PersistenceExtensionsTest {
         assertThat(dt.doubleValue(), is(closeTo(expected, 0.01)));
 
         // default persistence service
-        average = PersistenceExtensions.averageBetween(quantityItem, beginStored, endStored);
+        average = PersistenceExtensions.averageBetween(numberItem, beginStored, endStored);
         assertNull(average);
     }
 
     @Test
     public void testAverageSinceQuantityType() {
         ZonedDateTime start = ZonedDateTime.of(BEFORE_START, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = average(BEFORE_START, null);
+        double expected = testAverage(BEFORE_START, null);
         State average = PersistenceExtensions.averageSince(quantityItem, start, SERVICE_ID);
         assertNotNull(average);
         QuantityType<?> qt = average.as(QuantityType.class);
@@ -1572,7 +1908,7 @@ public class PersistenceExtensionsTest {
         assertEquals(SIUnits.CELSIUS, qt.getUnit());
 
         start = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
+        expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         average = PersistenceExtensions.averageSince(quantityItem, start, SERVICE_ID);
         assertNotNull(average);
         qt = average.as(QuantityType.class);
@@ -1588,7 +1924,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testAverageUntilQuantityType() {
         ZonedDateTime end = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = average(null, FUTURE_INTERMEDIATE_VALUE_3);
+        double expected = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         State average = PersistenceExtensions.averageUntil(quantityItem, end, SERVICE_ID);
         assertNotNull(average);
         QuantityType<?> qt = average.as(QuantityType.class);
@@ -1607,9 +1943,8 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expected = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+        double expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         State average = PersistenceExtensions.averageBetween(quantityItem, beginStored, endStored, SERVICE_ID);
-
         assertNotNull(average);
         QuantityType<?> qt = average.as(QuantityType.class);
         assertNotNull(qt);
@@ -1618,8 +1953,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        expected = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         average = PersistenceExtensions.averageBetween(quantityItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(average);
         qt = average.as(QuantityType.class);
@@ -1629,8 +1963,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         average = PersistenceExtensions.averageBetween(quantityItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(average);
         qt = average.as(QuantityType.class);
@@ -1646,7 +1979,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testAverageSinceGroupQuantityType() {
         ZonedDateTime start = ZonedDateTime.of(BEFORE_START, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = average(BEFORE_START, null);
+        double expected = testAverage(BEFORE_START, null);
         State average = PersistenceExtensions.averageSince(groupQuantityItem, start, SERVICE_ID);
         assertNotNull(average);
         QuantityType<?> qt = average.as(QuantityType.class);
@@ -1655,7 +1988,7 @@ public class PersistenceExtensionsTest {
         assertEquals(SIUnits.CELSIUS, qt.getUnit());
 
         start = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(HISTORIC_INTERMEDIATE_VALUE_1, null);
+        expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, null);
         average = PersistenceExtensions.averageSince(groupQuantityItem, start, SERVICE_ID);
         assertNotNull(average);
         qt = average.as(QuantityType.class);
@@ -1671,7 +2004,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testAverageUntilGroupQuantityType() {
         ZonedDateTime end = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = average(null, FUTURE_INTERMEDIATE_VALUE_3);
+        double expected = testAverage(null, FUTURE_INTERMEDIATE_VALUE_3);
         State average = PersistenceExtensions.averageUntil(groupQuantityItem, end, SERVICE_ID);
         assertNotNull(average);
         QuantityType<?> qt = average.as(QuantityType.class);
@@ -1690,9 +2023,8 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expected = average(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+        double expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         State average = PersistenceExtensions.averageBetween(groupQuantityItem, beginStored, endStored, SERVICE_ID);
-
         assertNotNull(average);
         QuantityType<?> qt = average.as(QuantityType.class);
         assertNotNull(qt);
@@ -1701,8 +2033,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        expected = testAverage(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         average = PersistenceExtensions.averageBetween(groupQuantityItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(average);
         qt = average.as(QuantityType.class);
@@ -1712,8 +2043,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = average(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         average = PersistenceExtensions.averageBetween(groupQuantityItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(average);
         qt = average.as(QuantityType.class);
@@ -1727,109 +2057,97 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
-    public void testAverageSinceOnOffType() {
+    public void testAverageOnOffType() {
         // switch is 5h ON, 5h OFF, and 5h ON (until now)
-
+        // switch is 5h ON, 5h OFF, and 5h ON (from now)
         ZonedDateTime now = ZonedDateTime.now().truncatedTo(ChronoUnit.MINUTES);
-        State average = PersistenceExtensions.averageSince(switchItem, now.plusHours(SWITCH_START), SERVICE_ID);
+        State average = PersistenceExtensions.averageBetween(switchItem, now.plusHours(SWITCH_START),
+                now.plusHours(SWITCH_END), SERVICE_ID);
         assertNotNull(average);
         DecimalType dt = average.as(DecimalType.class);
         assertNotNull(dt);
         assertThat(dt.doubleValue(),
-                is(closeTo((SWITCH_OFF_1 - SWITCH_ON_1 - SWITCH_ON_2) / (-1.0 * SWITCH_START), 0.01)));
+                is(closeTo((SWITCH_OFF_1 - SWITCH_ON_1 - SWITCH_ON_2 + SWITCH_OFF_3 - SWITCH_ON_3 + SWITCH_OFF_2)
+                        / (1.0 * (-SWITCH_START + SWITCH_END)), 0.01)));
 
-        average = PersistenceExtensions.averageSince(switchItem, now.plusHours(SWITCH_OFF_INTERMEDIATE_1), SERVICE_ID);
+        average = PersistenceExtensions.averageBetween(switchItem, now.plusHours(SWITCH_OFF_INTERMEDIATE_1),
+                now.plusHours(SWITCH_OFF_INTERMEDIATE_2), SERVICE_ID);
         assertNotNull(average);
         dt = average.as(DecimalType.class);
         assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(-SWITCH_ON_2 / (-1.0 * SWITCH_OFF_INTERMEDIATE_1), 0.01)));
+        assertThat(dt.doubleValue(), is(closeTo(
+                (-SWITCH_ON_2 + SWITCH_OFF_2) / (1.0 * (-SWITCH_OFF_INTERMEDIATE_1 + SWITCH_OFF_INTERMEDIATE_2)),
+                0.01)));
 
-        average = PersistenceExtensions.averageSince(switchItem, now.plusHours(SWITCH_ON_2), SERVICE_ID);
-        assertNotNull(average);
-        dt = average.as(DecimalType.class);
-        assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(-SWITCH_ON_2 / (-1.0 * SWITCH_ON_2), 0.01)));
-
-        average = PersistenceExtensions.averageSince(switchItem, now.plusHours(SWITCH_ON_INTERMEDIATE_21), SERVICE_ID);
+        average = PersistenceExtensions.averageBetween(switchItem, now.plusHours(SWITCH_ON_2),
+                now.plusHours(SWITCH_ON_3), SERVICE_ID);
         assertNotNull(average);
         dt = average.as(DecimalType.class);
         assertNotNull(dt);
         assertThat(dt.doubleValue(),
-                is(closeTo(-SWITCH_ON_INTERMEDIATE_21 / (-1.0 * SWITCH_ON_INTERMEDIATE_21), 0.01)));
+                is(closeTo((-SWITCH_ON_2 + SWITCH_OFF_2) / (1.0 * (-SWITCH_ON_2 + SWITCH_ON_3)), 0.01)));
 
-        average = PersistenceExtensions.averageSince(switchItem, now, SERVICE_ID);
+        average = PersistenceExtensions.averageBetween(switchItem, now.plusHours(SWITCH_ON_INTERMEDIATE_21),
+                now.plusHours(SWITCH_ON_INTERMEDIATE_22), SERVICE_ID);
         assertNotNull(average);
         dt = average.as(DecimalType.class);
         assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(1d, 0.01)));
+        assertThat(dt.doubleValue(), is(closeTo((-SWITCH_ON_INTERMEDIATE_21 + SWITCH_ON_INTERMEDIATE_22)
+                / (1.0 * (-SWITCH_ON_INTERMEDIATE_21 + SWITCH_ON_INTERMEDIATE_22)), 0.01)));
 
         average = PersistenceExtensions.averageSince(switchItem, now.plusHours(1), SERVICE_ID);
         assertNull(average);
-    }
-
-    @Test
-    public void testAverageUntilOnOffType() {
-        // switch is 5h ON, 5h OFF, and 5h ON (from now)
-
-        ZonedDateTime now = ZonedDateTime.now().truncatedTo(ChronoUnit.MINUTES);
-        State average = PersistenceExtensions.averageUntil(switchItem, now.plusHours(SWITCH_END), SERVICE_ID);
-        assertNotNull(average);
-        DecimalType dt = average.as(DecimalType.class);
-        assertNotNull(dt);
-        assertThat(dt.doubleValue(),
-                is(closeTo((SWITCH_OFF_3 - SWITCH_ON_3 + SWITCH_OFF_2) / (1.0 * SWITCH_END), 0.01)));
-
-        average = PersistenceExtensions.averageUntil(switchItem, now.plusHours(SWITCH_OFF_INTERMEDIATE_2), SERVICE_ID);
-        assertNotNull(average);
-        dt = average.as(DecimalType.class);
-        assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(SWITCH_OFF_2 / (1.0 * SWITCH_OFF_INTERMEDIATE_2), 0.01)));
-
-        average = PersistenceExtensions.averageUntil(switchItem, now.plusHours(SWITCH_ON_3), SERVICE_ID);
-        assertNotNull(average);
-        dt = average.as(DecimalType.class);
-        assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(SWITCH_OFF_2 / (1.0 * SWITCH_ON_3), 0.01)));
-
-        average = PersistenceExtensions.averageUntil(switchItem, now.plusHours(SWITCH_ON_INTERMEDIATE_22), SERVICE_ID);
-        assertNotNull(average);
-        dt = average.as(DecimalType.class);
-        assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(SWITCH_ON_INTERMEDIATE_22 / (1.0 * SWITCH_ON_INTERMEDIATE_22), 0.01)));
-
-        average = PersistenceExtensions.averageUntil(switchItem, now.plusMinutes(1), SERVICE_ID);
-        assertNotNull(average);
-        dt = average.as(DecimalType.class);
-        assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(1d, 0.01)));
 
         average = PersistenceExtensions.averageUntil(switchItem, now.minusHours(1), SERVICE_ID);
         assertNull(average);
     }
 
     @Test
-    public void testAverageSinceDecimalTypeIrregularTimespans() {
+    public void testAverageBetweenDecimalTypeIrregularTimespans() {
         ZonedDateTime now = ZonedDateTime.now();
         int historicHours = 27;
-        int futureHours = 0;
+        int futureHours = 27;
 
+        // Persistence will contain following entries:
+        // 0 - 27 hours back in time
+        // 100 - 26 hours back in time
+        // 0 - 25 hours back in time
+        // 50 - 2 hours back in time
+        // 0 - 1 hour back in time
+        // 0 - 1 hour forward in time
+        // 50 - 2 hours forward in time
+        // 0 - 3 hours forward in time
+        // 100 - 25 hours forward in time
+        // 0 - 26 hour forward in time
         createTestCachedValuesPersistenceService(now, historicHours, futureHours);
 
-        State average = PersistenceExtensions.averageSince(numberItem, now.minusHours(historicHours),
+        // Testing that average calculates the correct average for the last half hour without persisted value in
+        // that horizon
+        State average = PersistenceExtensions.averageSince(numberItem, now.minusMinutes(30),
                 TestCachedValuesPersistenceService.ID);
         assertNotNull(average);
         DecimalType dt = average.as(DecimalType.class);
         assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo((100.0 + 50.0) / historicHours, 0.01)));
+        assertThat(dt.doubleValue(), is(closeTo(0.0, 0.01)));
 
-        average = PersistenceExtensions.averageSince(numberItem, now.minusHours(historicHours).plusHours(3),
-                TestCachedValuesPersistenceService.ID);
+        // Testing that average calculates the correct average from the last 27 hours to the next 27 hours
+        average = PersistenceExtensions.averageBetween(numberItem, now.minusHours(historicHours),
+                now.plusHours(futureHours), TestCachedValuesPersistenceService.ID);
         assertNotNull(average);
         dt = average.as(DecimalType.class);
         assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(50.0 / (historicHours - 3.0), 0.01)));
+        assertThat(dt.doubleValue(), is(closeTo((100.0 + 50.0 + 100.0 + 50.0) / (historicHours + futureHours), 0.01)));
 
-        average = PersistenceExtensions.averageSince(numberItem, now.minusMinutes(30),
+        // Testing that average calculates the correct average from the last 24 hours to the next 24 hours
+        average = PersistenceExtensions.averageBetween(numberItem, now.minusHours(historicHours).plusHours(3),
+                now.plusHours(futureHours).minusHours(3), TestCachedValuesPersistenceService.ID);
+        assertNotNull(average);
+        dt = average.as(DecimalType.class);
+        assertNotNull(dt);
+        assertThat(dt.doubleValue(), is(closeTo((50.0 + 50.0) / (historicHours - 3.0 + futureHours - 3.0), 0.01)));
+
+        // Testing that average calculates the correct average from the last 30 minutes to the next 30 minutes
+        average = PersistenceExtensions.averageBetween(numberItem, now.minusMinutes(30), now.plusMinutes(30),
                 TestCachedValuesPersistenceService.ID);
         assertNotNull(average);
         dt = average.as(DecimalType.class);
@@ -1838,33 +2156,27 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
-    public void testAverageUntilDecimalTypeIrregularTimespans() {
+    public void testAverageBetweenNoPersistedValues() {
         ZonedDateTime now = ZonedDateTime.now();
-        int historicHours = 0;
-        int futureHours = 27;
+        int historicHours = 27;
+        int futureHours = 0;
 
+        // Persistence will contain following entries:
+        // 0 - 27 hours back in time
+        // 100 - 26 hours back in time
+        // 0 - 25 hours back in time
+        // 50 - 2 hours back in time
+        // 0 - 1 hour back in time
         createTestCachedValuesPersistenceService(now, historicHours, futureHours);
 
-        State average = PersistenceExtensions.averageUntil(numberItem, now.plusHours(futureHours),
+        // Testing that average calculates the correct average for the half hour without persisted values in
+        // that horizon
+        State average = PersistenceExtensions.averageBetween(numberItem, now.minusMinutes(105), now.minusMinutes(75),
                 TestCachedValuesPersistenceService.ID);
         assertNotNull(average);
         DecimalType dt = average.as(DecimalType.class);
         assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo((100.0 + 50.0) / futureHours, 0.01)));
-
-        average = PersistenceExtensions.averageUntil(numberItem, now.plusHours(futureHours).minusHours(2),
-                TestCachedValuesPersistenceService.ID);
-        assertNotNull(average);
-        dt = average.as(DecimalType.class);
-        assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(50.0 / (futureHours - 2.0), 0.01)));
-
-        average = PersistenceExtensions.averageUntil(numberItem, now.plusMinutes(30),
-                TestCachedValuesPersistenceService.ID);
-        assertNotNull(average);
-        dt = average.as(DecimalType.class);
-        assertNotNull(dt);
-        assertThat(dt.doubleValue(), is(closeTo(0, 0.01)));
+        assertThat(dt.doubleValue(), is(closeTo(50.0, 0.01)));
     }
 
     @Test
@@ -1879,9 +2191,26 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
+    public void testAverageBetweenEnergyPriceQuantityType() {
+        ZonedDateTime beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        double expected = testAverage(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+        State average = PersistenceExtensions.averageBetween(energyPriceQuantityItem, beginStored, endStored,
+                SERVICE_ID);
+
+        assertNotNull(average);
+        QuantityType<?> qt = average.as(QuantityType.class);
+        assertNotNull(qt);
+        assertThat(qt.doubleValue(), is(closeTo(expected, 0.01)));
+        assertEquals(CurrencyUnits.BASE_ENERGY_PRICE, qt.getUnit());
+    }
+
+    @Test
     public void testMedianSinceDecimalType() {
         ZonedDateTime start = ZonedDateTime.of(BEFORE_START, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = median(BEFORE_START, null);
+        double expected = testMedian(BEFORE_START, null);
         State median = PersistenceExtensions.medianSince(numberItem, start, SERVICE_ID);
         assertNotNull(median);
         DecimalType dt = median.as(DecimalType.class);
@@ -1889,7 +2218,7 @@ public class PersistenceExtensionsTest {
         assertEquals(expected, dt.doubleValue(), 0.01);
 
         start = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(HISTORIC_INTERMEDIATE_VALUE_1, null);
+        expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, null);
         median = PersistenceExtensions.medianSince(numberItem, start, SERVICE_ID);
         assertNotNull(median);
         dt = median.as(DecimalType.class);
@@ -1904,7 +2233,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testMedianUntilDecimalType() {
         ZonedDateTime end = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = median(null, FUTURE_INTERMEDIATE_VALUE_3);
+        double expected = testMedian(null, FUTURE_INTERMEDIATE_VALUE_3);
         State median = PersistenceExtensions.medianUntil(numberItem, end, SERVICE_ID);
         assertNotNull(median);
         DecimalType dt = median.as(DecimalType.class);
@@ -1922,8 +2251,7 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-
-        double expected = median(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+        double expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         State median = PersistenceExtensions.medianBetween(numberItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(median);
         DecimalType dt = median.as(DecimalType.class);
@@ -1932,8 +2260,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        expected = testMedian(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         median = PersistenceExtensions.medianBetween(numberItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(median);
         dt = median.as(DecimalType.class);
@@ -1942,8 +2269,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         median = PersistenceExtensions.medianBetween(numberItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(median);
         dt = median.as(DecimalType.class);
@@ -1958,7 +2284,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testMedianSinceQuantityType() {
         ZonedDateTime start = ZonedDateTime.of(BEFORE_START, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = median(BEFORE_START, null);
+        double expected = testMedian(BEFORE_START, null);
         State median = PersistenceExtensions.medianSince(quantityItem, start, SERVICE_ID);
         assertNotNull(median);
         QuantityType<?> qt = median.as(QuantityType.class);
@@ -1967,7 +2293,7 @@ public class PersistenceExtensionsTest {
         assertEquals(SIUnits.CELSIUS, qt.getUnit());
 
         start = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(HISTORIC_INTERMEDIATE_VALUE_1, null);
+        expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, null);
         median = PersistenceExtensions.medianSince(quantityItem, start, SERVICE_ID);
         assertNotNull(median);
         qt = median.as(QuantityType.class);
@@ -1983,7 +2309,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testMedianUntilQuantityType() {
         ZonedDateTime end = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = median(null, FUTURE_INTERMEDIATE_VALUE_3);
+        double expected = testMedian(null, FUTURE_INTERMEDIATE_VALUE_3);
         State median = PersistenceExtensions.medianUntil(quantityItem, end, SERVICE_ID);
         assertNotNull(median);
         QuantityType<?> qt = median.as(QuantityType.class);
@@ -2002,9 +2328,8 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expected = median(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+        double expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         State median = PersistenceExtensions.medianBetween(quantityItem, beginStored, endStored, SERVICE_ID);
-
         assertNotNull(median);
         QuantityType<?> qt = median.as(QuantityType.class);
         assertNotNull(qt);
@@ -2013,8 +2338,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        expected = testMedian(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         median = PersistenceExtensions.medianBetween(quantityItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(median);
         qt = median.as(QuantityType.class);
@@ -2024,8 +2348,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         median = PersistenceExtensions.medianBetween(quantityItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(median);
         qt = median.as(QuantityType.class);
@@ -2041,7 +2364,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testMedianSinceGroupQuantityType() {
         ZonedDateTime start = ZonedDateTime.of(BEFORE_START, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = median(BEFORE_START, null);
+        double expected = testMedian(BEFORE_START, null);
         State median = PersistenceExtensions.medianSince(groupQuantityItem, start, SERVICE_ID);
         assertNotNull(median);
         QuantityType<?> qt = median.as(QuantityType.class);
@@ -2050,7 +2373,7 @@ public class PersistenceExtensionsTest {
         assertEquals(SIUnits.CELSIUS, qt.getUnit());
 
         start = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(HISTORIC_INTERMEDIATE_VALUE_1, null);
+        expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, null);
         median = PersistenceExtensions.medianSince(groupQuantityItem, start, SERVICE_ID);
         assertNotNull(median);
         qt = median.as(QuantityType.class);
@@ -2066,7 +2389,7 @@ public class PersistenceExtensionsTest {
     @Test
     public void testMedianUntilGroupQuantityType() {
         ZonedDateTime end = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        double expected = median(null, FUTURE_INTERMEDIATE_VALUE_3);
+        double expected = testMedian(null, FUTURE_INTERMEDIATE_VALUE_3);
         State median = PersistenceExtensions.medianUntil(groupQuantityItem, end, SERVICE_ID);
         assertNotNull(median);
         QuantityType<?> qt = median.as(QuantityType.class);
@@ -2085,9 +2408,8 @@ public class PersistenceExtensionsTest {
                 ZoneId.systemDefault());
         ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
                 ZoneId.systemDefault());
-        double expected = median(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+        double expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
         State median = PersistenceExtensions.medianBetween(groupQuantityItem, beginStored, endStored, SERVICE_ID);
-
         assertNotNull(median);
         QuantityType<?> qt = median.as(QuantityType.class);
         assertNotNull(qt);
@@ -2096,8 +2418,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
-
+        expected = testMedian(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4);
         median = PersistenceExtensions.medianBetween(groupQuantityItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(median);
         qt = median.as(QuantityType.class);
@@ -2107,8 +2428,7 @@ public class PersistenceExtensionsTest {
 
         beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
         endStored = ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault());
-        expected = median(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
-
+        expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, FUTURE_INTERMEDIATE_VALUE_3);
         median = PersistenceExtensions.medianBetween(groupQuantityItem, beginStored, endStored, SERVICE_ID);
         assertNotNull(median);
         qt = median.as(QuantityType.class);
@@ -2130,6 +2450,22 @@ public class PersistenceExtensionsTest {
         assertNotNull(qt);
         assertEquals(HISTORIC_END, qt.doubleValue(), 0.01);
         assertEquals(SIUnits.CELSIUS, qt.getUnit());
+    }
+
+    @Test
+    public void testMedianBetweenEnergyPriceQuantityType() {
+        ZonedDateTime beginStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        ZonedDateTime endStored = ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0,
+                ZoneId.systemDefault());
+        double expected = testMedian(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2);
+        State median = PersistenceExtensions.medianBetween(energyPriceQuantityItem, beginStored, endStored, SERVICE_ID);
+
+        assertNotNull(median);
+        QuantityType<?> qt = median.as(QuantityType.class);
+        assertNotNull(qt);
+        assertThat(qt.doubleValue(), is(closeTo(expected, 0.01)));
+        assertEquals(CurrencyUnits.BASE_ENERGY_PRICE, qt.getUnit());
     }
 
     @Test
@@ -2249,7 +2585,7 @@ public class PersistenceExtensionsTest {
 
     @Test
     public void testSumBetweenQuantityType() {
-        State sum = PersistenceExtensions.sumBetween(groupQuantityItem,
+        State sum = PersistenceExtensions.sumBetween(quantityItem,
                 ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
                 ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
         assertNotNull(sum);
@@ -2259,7 +2595,7 @@ public class PersistenceExtensionsTest {
                 qt.doubleValue(), 0.001);
         assertEquals(SIUnits.CELSIUS, qt.getUnit());
 
-        sum = PersistenceExtensions.sumBetween(groupQuantityItem,
+        sum = PersistenceExtensions.sumBetween(quantityItem,
                 ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
                 ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_4, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
         assertNotNull(sum);
@@ -2268,7 +2604,7 @@ public class PersistenceExtensionsTest {
         assertEquals(IntStream.rangeClosed(FUTURE_INTERMEDIATE_VALUE_3, FUTURE_INTERMEDIATE_VALUE_4).sum(),
                 qt.doubleValue(), 0.001);
 
-        sum = PersistenceExtensions.sumBetween(groupQuantityItem,
+        sum = PersistenceExtensions.sumBetween(quantityItem,
                 ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
                 ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
         assertNotNull(sum);
@@ -2280,7 +2616,7 @@ public class PersistenceExtensionsTest {
                 qt.doubleValue(), 0.001);
 
         // default persistence service
-        sum = PersistenceExtensions.sumBetween(groupQuantityItem,
+        sum = PersistenceExtensions.sumBetween(quantityItem,
                 ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
                 ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()));
 
@@ -2368,6 +2704,19 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
+    public void testSumBetweenEnergyPriceQuantityType() {
+        State sum = PersistenceExtensions.sumBetween(energyPriceQuantityItem,
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
+        assertNotNull(sum);
+        QuantityType<?> qt = sum.as(QuantityType.class);
+        assertNotNull(qt);
+        assertEquals(IntStream.rangeClosed(HISTORIC_INTERMEDIATE_VALUE_1, HISTORIC_INTERMEDIATE_VALUE_2).sum(),
+                qt.doubleValue(), 0.001);
+        assertEquals(CurrencyUnits.BASE_ENERGY_PRICE, qt.getUnit());
+    }
+
+    @Test
     public void testLastUpdate() {
         ZonedDateTime lastUpdate = PersistenceExtensions.lastUpdate(numberItem, SERVICE_ID);
         assertNotNull(lastUpdate);
@@ -2375,6 +2724,14 @@ public class PersistenceExtensionsTest {
 
         // default persistence service
         lastUpdate = PersistenceExtensions.lastUpdate(numberItem);
+        assertNull(lastUpdate);
+
+        // last update on empty persistence
+        ZonedDateTime now = ZonedDateTime.now();
+        int historicHours = 0;
+        int futureHours = 0;
+        createTestCachedValuesPersistenceService(now, historicHours, futureHours);
+        lastUpdate = PersistenceExtensions.lastUpdate(numberItem, TestCachedValuesPersistenceService.ID);
         assertNull(lastUpdate);
     }
 
@@ -2397,6 +2754,14 @@ public class PersistenceExtensionsTest {
 
         // default persistence service
         lastChange = PersistenceExtensions.lastChange(numberItem);
+        assertNull(lastChange);
+
+        // last change on empty persistence
+        ZonedDateTime now = ZonedDateTime.now();
+        int historicHours = 0;
+        int futureHours = 0;
+        createTestCachedValuesPersistenceService(now, historicHours, futureHours);
+        lastChange = PersistenceExtensions.lastChange(numberItem, TestCachedValuesPersistenceService.ID);
         assertNull(lastChange);
     }
 
@@ -2516,6 +2881,15 @@ public class PersistenceExtensionsTest {
         assertNotNull(qt);
         assertEquals(HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1, qt.doubleValue(), 0.001);
         assertEquals(SIUnits.CELSIUS, qt.getUnit());
+
+        delta = PersistenceExtensions.deltaBetween(energyPriceQuantityItem,
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
+        assertNotNull(delta);
+        qt = delta.as(QuantityType.class);
+        assertNotNull(qt);
+        assertEquals(HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1, qt.doubleValue(), 0.001);
+        assertEquals(CurrencyUnits.BASE_ENERGY_PRICE, qt.getUnit());
 
         delta = PersistenceExtensions.deltaBetween(numberItem,
                 ZonedDateTime.of(FUTURE_INTERMEDIATE_VALUE_3, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
@@ -2640,6 +3014,15 @@ public class PersistenceExtensionsTest {
                 0.001)));
 
         rate = PersistenceExtensions.evolutionRateBetween(quantityItem,
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
+                ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
+        assertNotNull(rate);
+        // ((now - then) / then) * 100
+        assertThat(rate.doubleValue(), is(closeTo(
+                100.0 * (HISTORIC_INTERMEDIATE_VALUE_2 - HISTORIC_INTERMEDIATE_VALUE_1) / HISTORIC_INTERMEDIATE_VALUE_1,
+                0.001)));
+
+        rate = PersistenceExtensions.evolutionRateBetween(energyPriceQuantityItem,
                 ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_1, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()),
                 ZonedDateTime.of(HISTORIC_INTERMEDIATE_VALUE_2, 1, 1, 0, 0, 0, 0, ZoneId.systemDefault()), SERVICE_ID);
         assertNotNull(rate);
@@ -2805,6 +3188,22 @@ public class PersistenceExtensionsTest {
 
         // default persistence service
         prevStateItem = PersistenceExtensions.previousState(groupQuantityItem, true);
+        assertNull(prevStateItem);
+    }
+
+    @Test
+    public void testPreviousStateEmptyPersistence() {
+        ZonedDateTime now = ZonedDateTime.now();
+        int historicHours = 0;
+        int futureHours = 0;
+
+        createTestCachedValuesPersistenceService(now, historicHours, futureHours);
+
+        HistoricItem prevStateItem = PersistenceExtensions.previousState(numberItem, false,
+                TestCachedValuesPersistenceService.ID);
+        assertNull(prevStateItem);
+
+        prevStateItem = PersistenceExtensions.previousState(numberItem, true, TestCachedValuesPersistenceService.ID);
         assertNull(prevStateItem);
     }
 
@@ -3188,6 +3587,94 @@ public class PersistenceExtensionsTest {
     }
 
     @Test
+    public void testPersistState() {
+        ZonedDateTime now = ZonedDateTime.now();
+        int historicHours = 27;
+        int futureHours = 27;
+        createTestCachedValuesPersistenceService(now, historicHours, futureHours);
+        numberItem.setState(STATE);
+
+        assertNotNull(PersistenceExtensions.getAllStatesSince(numberItem, now.minusHours(historicHours),
+                TestCachedValuesPersistenceService.ID));
+        assertThat(PersistenceExtensions.countSince(numberItem, now.minusHours(historicHours),
+                TestCachedValuesPersistenceService.ID), is(5L));
+        HistoricItem historicItem = PersistenceExtensions.previousState(numberItem,
+                TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(new DecimalType(0)));
+
+        PersistenceExtensions.persist(numberItem, TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock).handleExternalPersistenceDataChange(any(), eq(numberItem));
+        historicItem = PersistenceExtensions.previousState(numberItem, TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(STATE));
+    }
+
+    @Test
+    public void testPersistStateAtTime() {
+        ZonedDateTime now = ZonedDateTime.now();
+        int historicHours = 27;
+        int futureHours = 27;
+        createTestCachedValuesPersistenceService(now, historicHours, futureHours);
+
+        assertNotNull(PersistenceExtensions.getAllStatesSince(numberItem, now.minusHours(historicHours),
+                TestCachedValuesPersistenceService.ID));
+        assertThat(PersistenceExtensions.countSince(numberItem, now.minusHours(historicHours),
+                TestCachedValuesPersistenceService.ID), is(5L));
+        HistoricItem historicItem = PersistenceExtensions.previousState(numberItem,
+                TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(new DecimalType(0)));
+
+        PersistenceExtensions.persist(numberItem, now.minusMinutes(105), STATE, TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock).handleExternalPersistenceDataChange(any(), eq(numberItem));
+        historicItem = PersistenceExtensions.previousState(numberItem, TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(new DecimalType(0)));
+        historicItem = PersistenceExtensions.persistedState(numberItem, now.minusMinutes(90),
+                TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(STATE));
+    }
+
+    @Test
+    public void testPersistTimeSeries() {
+        ZonedDateTime now = ZonedDateTime.now();
+        int historicHours = 27;
+        int futureHours = 27;
+        createTestCachedValuesPersistenceService(now, historicHours, futureHours);
+
+        assertNotNull(PersistenceExtensions.getAllStatesBetween(numberItem, now.minusHours(historicHours),
+                now.plusHours(futureHours), TestCachedValuesPersistenceService.ID));
+        assertThat(PersistenceExtensions.countBetween(numberItem, now.minusHours(historicHours),
+                now.plusHours(futureHours), TestCachedValuesPersistenceService.ID), is(10L));
+        HistoricItem historicItem = PersistenceExtensions.previousState(numberItem,
+                TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(new DecimalType(0)));
+        historicItem = PersistenceExtensions.nextState(numberItem, TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(new DecimalType(0)));
+
+        TimeSeries timeSeries = new TimeSeries(Policy.REPLACE);
+        timeSeries.add(now.minusHours(5).toInstant(), STATE);
+        timeSeries.add(now.plusHours(5).toInstant(), STATE);
+        PersistenceExtensions.persist(numberItem, timeSeries, TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(1)).handleExternalPersistenceDataChange(any(), eq(numberItem));
+        historicItem = PersistenceExtensions.previousState(numberItem, TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(STATE));
+        historicItem = PersistenceExtensions.persistedState(numberItem, now.minusHours(6),
+                TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(new DecimalType(0)));
+        historicItem = PersistenceExtensions.persistedState(numberItem, now.plusHours(6),
+                TestCachedValuesPersistenceService.ID);
+        assertNotNull(historicItem);
+        assertThat(historicItem.getState(), is(STATE));
+    }
+
+    @Test
     public void testRemoveAllStatesSince() {
         ZonedDateTime now = ZonedDateTime.now();
         int historicHours = 27;
@@ -3205,6 +3692,7 @@ public class PersistenceExtensionsTest {
 
         PersistenceExtensions.removeAllStatesSince(numberItem, now.minusHours(1),
                 TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(1)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesSince(numberItem, now.minusHours(historicHours),
                 TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countSince(numberItem, now.minusHours(historicHours),
@@ -3215,6 +3703,7 @@ public class PersistenceExtensionsTest {
 
         PersistenceExtensions.removeAllStatesSince(numberItem, now.minusHours(3),
                 TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(2)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesSince(numberItem, now.minusHours(historicHours),
                 TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countSince(numberItem, now.minusHours(historicHours),
@@ -3225,6 +3714,7 @@ public class PersistenceExtensionsTest {
 
         PersistenceExtensions.removeAllStatesSince(numberItem, now.minusHours(historicHours + 1),
                 TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(3)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesSince(numberItem, now.minusHours(historicHours),
                 TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countSince(numberItem, now.minusHours(historicHours),
@@ -3249,6 +3739,7 @@ public class PersistenceExtensionsTest {
         assertThat(historicItem.getState(), is(new DecimalType(0)));
 
         PersistenceExtensions.removeAllStatesUntil(numberItem, now.plusHours(1), TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(1)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesUntil(numberItem, now.plusHours(futureHours),
                 TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countUntil(numberItem, now.plusHours(futureHours),
@@ -3258,6 +3749,7 @@ public class PersistenceExtensionsTest {
         assertThat(historicItem.getState(), is(new DecimalType(50)));
 
         PersistenceExtensions.removeAllStatesUntil(numberItem, now.plusHours(2), TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(2)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesUntil(numberItem, now.plusHours(futureHours),
                 TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countUntil(numberItem, now.plusHours(futureHours),
@@ -3268,6 +3760,7 @@ public class PersistenceExtensionsTest {
 
         PersistenceExtensions.removeAllStatesUntil(numberItem, now.plusHours(futureHours + 1),
                 TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(3)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesUntil(numberItem, now.plusHours(futureHours),
                 TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countUntil(numberItem, now.plusHours(futureHours),
@@ -3297,6 +3790,7 @@ public class PersistenceExtensionsTest {
 
         PersistenceExtensions.removeAllStatesBetween(numberItem, now.minusHours(2), now.minusHours(1),
                 TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(1)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesBetween(numberItem, now.minusHours(historicHours),
                 now.plusHours(futureHours), TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countBetween(numberItem, now.minusHours(historicHours),
@@ -3310,6 +3804,7 @@ public class PersistenceExtensionsTest {
 
         PersistenceExtensions.removeAllStatesBetween(numberItem, now.plusHours(1), now.plusHours(2),
                 TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(2)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesBetween(numberItem, now.minusHours(historicHours),
                 now.plusHours(futureHours), TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countBetween(numberItem, now.minusHours(historicHours),
@@ -3323,6 +3818,7 @@ public class PersistenceExtensionsTest {
 
         PersistenceExtensions.removeAllStatesBetween(numberItem, now.minusHours(historicHours - 2),
                 now.plusHours(futureHours - 2), TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(3)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesBetween(numberItem, now.minusHours(historicHours),
                 now.plusHours(futureHours), TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countBetween(numberItem, now.minusHours(historicHours),
@@ -3336,6 +3832,7 @@ public class PersistenceExtensionsTest {
 
         PersistenceExtensions.removeAllStatesBetween(numberItem, now.minusHours(historicHours + 1),
                 now.plusHours(futureHours + 1), TestCachedValuesPersistenceService.ID);
+        verify(persistenceManagerMock, times(4)).handleExternalPersistenceDataChange(any(), eq(numberItem));
         assertNotNull(PersistenceExtensions.getAllStatesBetween(numberItem, now.minusHours(historicHours),
                 now.plusHours(futureHours), TestCachedValuesPersistenceService.ID));
         assertThat(PersistenceExtensions.countBetween(numberItem, now.minusHours(historicHours),
@@ -3352,7 +3849,7 @@ public class PersistenceExtensionsTest {
         assertTrue(futureHours == 0 || futureHours > 5);
 
         TestCachedValuesPersistenceService persistenceService = new TestCachedValuesPersistenceService();
-        new PersistenceExtensions(new PersistenceServiceRegistry() {
+        new PersistenceExtensions(persistenceManagerMock, new PersistenceServiceRegistry() {
 
             @Override
             public @Nullable String getDefaultId() {
@@ -3375,7 +3872,7 @@ public class PersistenceExtensionsTest {
             public @Nullable PersistenceService get(@Nullable String serviceId) {
                 return TestCachedValuesPersistenceService.ID.equals(serviceId) ? persistenceService : null;
             }
-        }, timeZoneProviderMock);
+        }, persistenceServiceConfigurationRegistryMock, timeZoneProviderMock);
 
         if (historicHours > 0) {
             ZonedDateTime beginHistory = now.minusHours(historicHours);

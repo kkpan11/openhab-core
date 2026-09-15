@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -123,7 +123,8 @@ public class DateTimeTriggerHandler extends BaseTriggerModuleHandler
         ModuleHandlerCallback callback = this.callback;
         if (callback instanceof TriggerHandlerCallback triggerHandlerCallback) {
             TimerEvent event = AutomationEventFactory.createTimerEvent(module.getTypeUID(),
-                    Objects.requireNonNullElse(module.getLabel(), module.getId()), Map.of(CONFIG_ITEM_NAME, itemName));
+                    Objects.requireNonNullElse(module.getLabel(), module.getId()),
+                    Map.of(CONFIG_ITEM_NAME, itemName, CONFIG_TIME_ONLY, timeOnly, CONFIG_OFFSET, offset));
             triggerHandlerCallback.triggered(module, Map.of("event", event));
         } else {
             logger.debug("Tried to trigger, but callback isn't available!");
@@ -177,8 +178,7 @@ public class DateTimeTriggerHandler extends BaseTriggerModuleHandler
             cronExpression = CronAdjuster.REBOOT;
         } else if (value instanceof DateTimeType dateTimeType) {
             boolean itemIsTimeOnly = dateTimeType.toString().startsWith("1970-01-01T");
-            cronExpression = dateTimeType.getZonedDateTime().withZoneSameInstant(ZoneId.systemDefault())
-                    .plusSeconds(offset.longValue())
+            cronExpression = dateTimeType.getZonedDateTime(ZoneId.systemDefault()).plusSeconds(offset.longValue())
                     .format(timeOnly || itemIsTimeOnly ? CRON_TIMEONLY_FORMATTER : CRON_FORMATTER);
             startScheduler();
         } else {

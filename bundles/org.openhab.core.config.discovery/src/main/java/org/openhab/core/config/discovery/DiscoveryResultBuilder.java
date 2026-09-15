@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -63,6 +63,20 @@ public class DiscoveryResultBuilder {
     }
 
     /**
+     * Creates a new builder initialized with the values from the specified {@link DiscoveryResult}.
+     *
+     * @param discoveryResult the {@link DiscoveryResult} to use for initialization.
+     * @return The new {@link DiscoveryResultBuilder}.
+     */
+    public static DiscoveryResultBuilder create(DiscoveryResult discoveryResult) {
+        return new DiscoveryResultBuilder(discoveryResult.getThingUID()).withBridge(discoveryResult.getBridgeUID())
+                .withProperties(discoveryResult.getProperties())
+                .withRepresentationProperty(discoveryResult.getRepresentationProperty())
+                .withLabel(discoveryResult.getLabel()).withTTL(discoveryResult.getTimeToLive())
+                .withThingType(discoveryResult.getThingTypeUID());
+    }
+
+    /**
      * Explicitly sets the thing type.
      *
      * @param thingTypeUID the {@link ThingTypeUID}
@@ -115,7 +129,6 @@ public class DiscoveryResultBuilder {
      * @return the updated builder
      */
     public DiscoveryResultBuilder withBridge(@Nullable ThingUID bridgeUID) {
-        validateThingUID(bridgeUID);
         this.bridgeUID = bridgeUID;
         return this;
     }
@@ -162,14 +175,6 @@ public class DiscoveryResultBuilder {
         }
         return new DiscoveryResultImpl(thingTypeUID, thingUID, bridgeUID, properties, representationProperty, label,
                 ttl);
-    }
-
-    private void validateThingUID(@Nullable ThingUID bridgeUID) {
-        if (bridgeUID != null && (!thingUID.getBindingId().equals(bridgeUID.getBindingId())
-                || !thingUID.getBridgeIds().contains(bridgeUID.getId()))) {
-            throw new IllegalArgumentException(
-                    "Thing UID '" + thingUID + "' does not match bridge UID '" + bridgeUID + "'");
-        }
     }
 
     private String getStackTrace(final Thread thread) {

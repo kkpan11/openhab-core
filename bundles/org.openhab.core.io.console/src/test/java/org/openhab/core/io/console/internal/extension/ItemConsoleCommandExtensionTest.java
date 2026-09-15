@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,7 @@ package org.openhab.core.io.console.internal.extension;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +52,7 @@ public class ItemConsoleCommandExtensionTest {
 
         assertTrue(completer.complete(new String[] { "" }, 0, 0, candidates));
         assertEquals(5, candidates.size());
-        assertEquals("addTag ", candidates.get(0));
+        assertEquals("addTag ", candidates.getFirst());
         assertEquals("clear ", candidates.get(1));
         assertEquals("list ", candidates.get(2));
         assertEquals("remove ", candidates.get(3));
@@ -61,7 +61,7 @@ public class ItemConsoleCommandExtensionTest {
 
         assertTrue(completer.complete(new String[] { "A", "Item1" }, 0, 1, candidates));
         assertEquals(1, candidates.size());
-        assertEquals("addTag ", candidates.get(0));
+        assertEquals("addTag ", candidates.getFirst());
     }
 
     @Test
@@ -75,17 +75,17 @@ public class ItemConsoleCommandExtensionTest {
 
         assertTrue(completer.complete(new String[] { "addTag", "I" }, 0, 6, candidates));
         assertEquals(1, candidates.size());
-        assertEquals("addTag ", candidates.get(0));
+        assertEquals("addTag ", candidates.getFirst());
         candidates.clear();
 
         assertTrue(completer.complete(new String[] { "addTag", "I" }, 1, 1, candidates));
         assertEquals(1, candidates.size());
-        assertEquals("Item1 ", candidates.get(0));
+        assertEquals("Item1 ", candidates.getFirst());
         candidates.clear();
 
         assertTrue(completer.complete(new String[] { "rmTag", "I" }, 1, 1, candidates));
         assertEquals(1, candidates.size());
-        assertEquals("Item1 ", candidates.get(0));
+        assertEquals("Item1 ", candidates.getFirst());
     }
 
     @Test
@@ -96,12 +96,12 @@ public class ItemConsoleCommandExtensionTest {
 
         assertTrue(completer.complete(new String[] { "remove", "I" }, 0, 6, candidates));
         assertEquals(1, candidates.size());
-        assertEquals("remove ", candidates.get(0));
+        assertEquals("remove ", candidates.getFirst());
         candidates.clear();
 
         assertTrue(completer.complete(new String[] { "remove", "I" }, 1, 1, candidates));
         assertEquals(1, candidates.size());
-        assertEquals("Item2 ", candidates.get(0));
+        assertEquals("Item2 ", candidates.getFirst());
     }
 
     @Test
@@ -110,14 +110,11 @@ public class ItemConsoleCommandExtensionTest {
         var item4 = new SwitchItem("Item4");
         item3.addTag("Tag1");
         when(managedItemProviderMock.get(anyString())).thenAnswer(invocation -> {
-            switch ((String) invocation.getArguments()[0]) {
-                case "Item3":
-                    return item3;
-                case "Item4":
-                    return item4;
-                default:
-                    return null;
-            }
+            return switch ((String) invocation.getArguments()[0]) {
+                case "Item3" -> item3;
+                case "Item4" -> item4;
+                default -> null;
+            };
         });
         var candidates = new ArrayList<String>();
 
@@ -135,6 +132,6 @@ public class ItemConsoleCommandExtensionTest {
 
         assertTrue(completer.complete(new String[] { "rmTag", "Item3", "" }, 2, 0, candidates));
         assertEquals(1, candidates.size());
-        assertEquals("Tag1 ", candidates.get(0));
+        assertEquals("Tag1 ", candidates.getFirst());
     }
 }

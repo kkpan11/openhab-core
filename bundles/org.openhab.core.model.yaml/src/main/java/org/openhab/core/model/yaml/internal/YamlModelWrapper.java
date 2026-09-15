@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,11 +12,11 @@
  */
 package org.openhab.core.model.yaml.internal;
 
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -24,12 +24,13 @@ import com.fasterxml.jackson.databind.JsonNode;
  * The {@link YamlModelWrapper} is used to store the information read from a model in the model cache.
  *
  * @author Jan N. Klug - Initial contribution
+ * @author Laurent Garnier - Map used instead of table
  */
 @NonNullByDefault
 public class YamlModelWrapper {
     private final int version;
     private final boolean readOnly;
-    private final Map<String, List<JsonNode>> nodes = new ConcurrentHashMap<>();
+    private final Map<String, @Nullable JsonNode> nodes = new ConcurrentHashMap<>();
 
     public YamlModelWrapper(int version, boolean readOnly) {
         this.version = version;
@@ -44,7 +45,7 @@ public class YamlModelWrapper {
         return readOnly;
     }
 
-    public Map<String, List<JsonNode>> getNodes() {
+    public Map<String, @Nullable JsonNode> getNodes() {
         return nodes;
     }
 }

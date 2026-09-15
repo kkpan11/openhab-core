@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,7 +17,8 @@ import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.nullable;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -68,9 +69,12 @@ import org.openhab.core.thing.type.ThingTypeBuilder;
  * @author Alex Tugarev - Adapted for constructor modification of ConfigDescriptionParameter
  * @author Thomas Höfer - Thing type constructor modified because of thing properties introduction
  * @author Wouter Born - Migrate tests from Groovy to Java
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public class ThingFactoryTest extends JavaOSGiTest {
+
+    private static final String SEMANTIC_EQUIPMENT_TAG = "MotionDetector";
 
     @Test
     public void createSimpleThing() {
@@ -152,7 +156,7 @@ public class ThingFactoryTest extends JavaOSGiTest {
         assertThat(thing.getConfiguration().get("testProperty"), is(not(nullValue())));
         assertThat(thing.getConfiguration().get("testProperty"), is(equalTo("default")));
         assertThat(thing.getChannels().size(), is(equalTo(2)));
-        assertThat(thing.getChannels().get(0).getConfiguration().get("testProperty"), is(equalTo("default")));
+        assertThat(thing.getChannels().getFirst().getConfiguration().get("testProperty"), is(equalTo("default")));
         assertThat(thing.getChannels().get(1).getConfiguration().get("testProperty"), is(equalTo("default")));
         assertThat(thing.getProperties().size(), is(0));
     }
@@ -214,10 +218,9 @@ public class ThingFactoryTest extends JavaOSGiTest {
         assertThat(thing.getConfiguration().get("p4"), is(nullValue()));
         assertThat(thing.getConfiguration().get("p5"), is(instanceOf(List.class)));
         assertThat(((List<?>) thing.getConfiguration().get("p5")).size(), is(1));
-        assertThat(((List<?>) thing.getConfiguration().get("p5")).get(0), is(instanceOf(BigDecimal.class)));
-        assertThat(
-                ((BigDecimal) ((List<?>) thing.getConfiguration().get("p5")).get(0)).compareTo(new BigDecimal("2.3")),
-                is(0));
+        assertThat(((List<?>) thing.getConfiguration().get("p5")).getFirst(), is(instanceOf(BigDecimal.class)));
+        assertThat(((BigDecimal) ((List<?>) thing.getConfiguration().get("p5")).getFirst())
+                .compareTo(new BigDecimal("2.3")), is(0));
         assertThat(thing.getConfiguration().get("p6"), is(instanceOf(List.class)));
         assertThat(((List<?>) thing.getConfiguration().get("p6")).size(), is(3));
         assertThat(thing.getProperties().size(), is(0));
@@ -246,11 +249,11 @@ public class ThingFactoryTest extends JavaOSGiTest {
         Thing thing = ThingFactory.createThing(thingType, new ThingUID(thingType.getUID(), "thingId"), configuration);
 
         assertThat(thing.getChannels().size(), is(2));
-        assertThat(thing.getChannels().get(0).getUID().toString(), is(equalTo("bindingId:thingType:thingId:ch1")));
-        assertThat(thing.getChannels().get(0).getAcceptedItemType(), is(equalTo(CoreItemFactory.COLOR)));
-        assertThat(thing.getChannels().get(0).getDefaultTags().contains("tag1"), is(true));
-        assertThat(thing.getChannels().get(0).getDefaultTags().contains("tag2"), is(true));
-        assertThat(thing.getChannels().get(0).getDefaultTags().contains("tag3"), is(false));
+        assertThat(thing.getChannels().getFirst().getUID().toString(), is(equalTo("bindingId:thingType:thingId:ch1")));
+        assertThat(thing.getChannels().getFirst().getAcceptedItemType(), is(equalTo(CoreItemFactory.COLOR)));
+        assertThat(thing.getChannels().getFirst().getDefaultTags().contains("tag1"), is(true));
+        assertThat(thing.getChannels().getFirst().getDefaultTags().contains("tag2"), is(true));
+        assertThat(thing.getChannels().getFirst().getDefaultTags().contains("tag3"), is(false));
         assertThat(thing.getChannels().get(1).getDefaultTags().contains("tag1"), is(false));
         assertThat(thing.getChannels().get(1).getDefaultTags().contains("tag2"), is(false));
         assertThat(thing.getChannels().get(1).getDefaultTags().contains("tag3"), is(true));
@@ -349,5 +352,14 @@ public class ThingFactoryTest extends JavaOSGiTest {
                     }
                 });
         registerService(channelGroupTypeProvider);
+    }
+
+    @Test
+    public void createThingWithTag() {
+        ThingType thingType = ThingTypeBuilder.instance(new ThingTypeUID("bindingId:thingType"), "label")
+                .withSemanticEquipmentTag(SEMANTIC_EQUIPMENT_TAG).build();
+        Thing thing = ThingFactory.createThing(thingType, new ThingUID(thingType.getUID(), "thingId"),
+                new Configuration());
+        assertThat(thing.getSemanticEquipmentTag(), is(SEMANTIC_EQUIPMENT_TAG));
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,13 +12,20 @@
  */
 package org.openhab.core.service;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.AbstractMap;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.SequencedMap;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -27,6 +34,7 @@ import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.OpenHAB;
 import org.openhab.core.common.NamedThreadFactory;
 import org.openhab.core.events.EventPublisher;
 import org.openhab.core.events.system.StartlevelEvent;
@@ -54,15 +62,17 @@ import org.slf4j.LoggerFactory;
  *
  * Start levels are defined as values between 0 and 100. They carry the following semantics:
  *
- * 00 - OSGi framework has been started.
- * 10 - OSGi application start level has been reached, i.e. bundles are activated.
- * 20 - Model entities (items, things, links, persist config) have been loaded, both from db as well as files.
- * 30 - Item states have been restored from persistence service, where applicable.
- * 40 - Rules from db, dsl and script files are loaded and parsed, script engine factories are available.
- * 50 - Rule engine has executed all "system started" rules and is active.
- * 70 - User interface is up and running.
- * 80 - All things have been initialized.
- * 100 - Startup is fully complete.
+ * <ul>
+ * <li>00 - OSGi framework has been started.</li>
+ * <li>10 - OSGi application start level has been reached, i.e. bundles are activated.</li>
+ * <li>20 - Model entities (items, things, links, persist config) have been loaded, both from db as well as files.</li>
+ * <li>30 - Item states have been restored from persistence service, where applicable.</li>
+ * <li>40 - Rules from db, dsl and script files are loaded and parsed, script engine factories are available.</li>
+ * <li>50 - Rule engine has executed all "system started" rules and is active.</li>
+ * <li>70 - User interface is up and running.</li>
+ * <li>80 - All things have been initialized.</li>
+ * <li>100 - Startup is fully complete.</li>
+ * </ul>
  *
  * @author Kai Kreuzer - Initial contribution
  *
@@ -82,6 +92,8 @@ public class StartLevelService {
     public static final int STARTLEVEL_THINGS = 80;
     public static final int STARTLEVEL_COMPLETE = 100;
 
+    private static final String STARTLEVEL_FILE = "openhab-start-level";
+
     private final Logger logger = LoggerFactory.getLogger(StartLevelService.class);
 
     private final BundleContext bundleContext;
@@ -98,7 +110,7 @@ public class StartLevelService {
 
     private int openHABStartLevel = 0;
 
-    private Map<Integer, Set<ReadyMarker>> startlevels = Map.of();
+    private SequencedMap<Integer, Set<ReadyMarker>> startlevels = Collections.emptySortedMap();
 
     @Activate
     public StartLevelService(BundleContext bundleContext, @Reference ReadyService readyService,
@@ -116,9 +128,11 @@ public class StartLevelService {
             handleOSGiStartlevel();
 
             if (openHABStartLevel >= 10) {
-                for (Integer level : new TreeSet<>(startlevels.keySet())) {
+                for (Entry<Integer, Set<ReadyMarker>> entry : startlevels.entrySet()) {
+                    Integer level = entry.getKey();
                     if (openHABStartLevel < level) {
-                        boolean reached = isStartLevelReached(startlevels.get(level));
+                        Set<ReadyMarker> markerSet = entry.getValue();
+                        boolean reached = isStartLevelReached(level, markerSet);
                         if (reached) {
                             setStartLevel(level);
                         } else {
@@ -142,12 +156,13 @@ public class StartLevelService {
         return openHABStartLevel;
     }
 
-    private boolean isStartLevelReached(@Nullable Set<ReadyMarker> markerSet) {
+    private boolean isStartLevelReached(Integer level, @Nullable Set<ReadyMarker> markerSet) {
         if (markerSet == null) {
             return true;
         }
         for (ReadyMarker m : markerSet) {
             if (!markers.contains(m)) {
+                logger.debug("Missing marker {} for start level {}", m, level);
                 return false;
             }
         }
@@ -173,7 +188,7 @@ public class StartLevelService {
         trackers.clear();
 
         // set up trackers and markers
-        startlevels = parseConfig(configuration);
+        startlevels = Collections.unmodifiableSequencedMap(new TreeMap<>(parseConfig(configuration)));
         startlevels.keySet()
                 .forEach(sl -> slmarker.put(sl, new ReadyMarker(STARTLEVEL_MARKER_TYPE, Integer.toString(sl))));
         slmarker.put(STARTLEVEL_COMPLETE,
@@ -241,6 +256,7 @@ public class StartLevelService {
         if (job != null) {
             job.cancel(true);
         }
+        atomicSaveFile(0);
     }
 
     private void setStartLevel(int level) {
@@ -250,9 +266,39 @@ public class StartLevelService {
         }
         openHABStartLevel = level;
         scheduler.submit(() -> {
+            atomicSaveFile(level);
             StartlevelEvent startlevelEvent = SystemEventFactory.createStartlevelEvent(level);
             eventPublisher.post(startlevelEvent);
             logger.debug("Reached start level {}", level);
         });
+    }
+
+    /**
+     * Saves the given start level to a specific file in the openHAB data directory. Uses
+     * atomic file operations to ensure that the file is written fully or not at all.
+     */
+    private void atomicSaveFile(int level) {
+        try {
+            String userDataPath = OpenHAB.getUserDataFolder();
+            Path path = Path.of(userDataPath);
+            if (!Files.isDirectory(path)) {
+                throw new IllegalArgumentException("User data path is not a directory: " + userDataPath);
+            }
+            Path file = path.resolve(STARTLEVEL_FILE);
+            Path temp = Files.createTempFile(path, STARTLEVEL_FILE, ".tmp");
+            try {
+                Files.writeString(temp, Integer.toString(level), StandardOpenOption.TRUNCATE_EXISTING,
+                        StandardOpenOption.WRITE);
+                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                try {
+                    Files.deleteIfExists(temp);
+                } catch (IOException ignore) {
+                }
+                throw e;
+            }
+        } catch (IOException | IllegalArgumentException e) {
+            logger.debug("Unable to write openHAB start level marker file", e);
+        }
     }
 }

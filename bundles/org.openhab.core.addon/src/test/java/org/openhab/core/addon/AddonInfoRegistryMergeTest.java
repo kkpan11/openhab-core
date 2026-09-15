@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -48,7 +48,7 @@ class AddonInfoRegistryMergeTest {
     }
 
     private AddonInfoProvider createAddonInfoProvider0() {
-        AddonInfo addonInfo = AddonInfo.builder("hue", "binding").withName("name-zero")
+        AddonInfo addonInfo = AddonInfo.builder("hue", "binding").withName("name-zero").withKeywords("the,quick")
                 .withDescription("description-zero").build();
         AddonInfoProvider provider = mock(AddonInfoProvider.class);
         when(provider.getAddonInfo(anyString(), any(Locale.class))).thenReturn(null);
@@ -61,7 +61,7 @@ class AddonInfoRegistryMergeTest {
     private AddonInfoProvider createAddonInfoProvider1() {
         AddonDiscoveryMethod discoveryMethod = new AddonDiscoveryMethod().setServiceType("mdns")
                 .setParameters(List.of(new AddonParameter("mdnsServiceType", "_hue._tcp.local.")));
-        AddonInfo addonInfo = AddonInfo.builder("hue", "binding").withName("name-one")
+        AddonInfo addonInfo = AddonInfo.builder("hue", "binding").withName("name-one").withKeywords("brown,fox")
                 .withDescription("description-one").withCountries("GB,NL").withConnection("local")
                 .withDiscoveryMethods(List.of(discoveryMethod)).build();
         AddonInfoProvider provider = mock(AddonInfoProvider.class);
@@ -151,6 +151,11 @@ class AddonInfoRegistryMergeTest {
         assertNotEquals("http://www.openhab.org", addonInfo.getConfigDescriptionURI());
         assertEquals("binding.hue", addonInfo.getServiceId());
         assertEquals(1, addonInfo.getDiscoveryMethods().size());
+
+        assertTrue(addonInfo.getKeywords().contains("the"));
+        assertTrue(addonInfo.getKeywords().contains("quick"));
+        assertTrue(addonInfo.getKeywords().contains("brown"));
+        assertTrue(addonInfo.getKeywords().contains("fox"));
     }
 
     /**

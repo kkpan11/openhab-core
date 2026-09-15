@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -33,6 +33,9 @@ import javax.measure.quantity.Temperature;
 import javax.measure.quantity.Time;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -55,6 +58,21 @@ import tech.units.indriya.unit.UnitDimension;
 @SuppressWarnings("null")
 @NonNullByDefault
 public class QuantityTypeTest {
+
+    @Nullable
+    private static Locale initialLocale;
+
+    @BeforeAll
+    public static void setUpClass() {
+        initialLocale = Locale.getDefault();
+    }
+
+    @AfterAll
+    @SuppressWarnings("PMD.SetDefaultLocale")
+    public static void tearDownClass() {
+        // Set the default locale to its initial value.
+        Locale.setDefault(initialLocale);
+    }
 
     /**
      * Locales having a different decimal and grouping separators to test string parsing and generation.
@@ -82,6 +100,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testKnownInvalidConstructors(Locale locale) {
         Locale.setDefault(locale);
 
@@ -117,6 +136,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testValidConstructors(Locale locale) {
         Locale.setDefault(locale);
 
@@ -171,6 +191,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testLocalizedStringConstruction(Locale defaultLocale) {
         Locale.setDefault(defaultLocale);
 
@@ -322,6 +343,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testConversionToHSBType(Locale locale) {
         Locale.setDefault(locale);
 
@@ -332,6 +354,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testConversionToPercentType(Locale locale) {
         Locale.setDefault(locale);
 
@@ -354,6 +377,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void toFullStringShouldParseToEqualState(Locale locale) {
         Locale.setDefault(locale);
 
@@ -365,6 +389,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testAdd(Locale locale) {
         Locale.setDefault(locale);
 
@@ -399,6 +424,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testSubtract(Locale locale) {
         Locale.setDefault(locale);
 
@@ -475,6 +501,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testDivideNumber(Locale locale) {
         Locale.setDefault(locale);
 
@@ -488,6 +515,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testDivideQuantityType(Locale locale) {
         Locale.setDefault(locale);
 
@@ -544,6 +572,7 @@ public class QuantityTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testDivideZero(Locale locale) {
         Locale.setDefault(locale);
 
@@ -649,13 +678,14 @@ public class QuantityTypeTest {
 
     @Test
     public void testMireds() {
-        QuantityType<Temperature> colorTemp = new QuantityType<>("2700 K");
+        // test value is selected to prevent any round-trip rounding errors
+        QuantityType<Temperature> colorTemp = new QuantityType<>("2000 K");
         QuantityType<?> mireds = colorTemp.toInvertibleUnit(Units.MIRED);
-        assertEquals(370, mireds.intValue());
+        assertEquals(500, mireds.intValue());
         assertThat(colorTemp.equals(mireds), is(true));
         assertThat(mireds.equals(colorTemp), is(true));
         QuantityType<?> andBack = mireds.toInvertibleUnit(Units.KELVIN);
-        assertEquals(2700, andBack.intValue());
+        assertEquals(2000, andBack.intValue());
     }
 
     @Test
@@ -663,5 +693,68 @@ public class QuantityTypeTest {
         QuantityType<Temperature> c = new QuantityType<>("1 °C");
         QuantityType<Temperature> f = c.toUnitRelative(ImperialUnits.FAHRENHEIT);
         assertEquals(1.8, f.doubleValue());
+    }
+
+    @Test
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    public void testIncrementalAdd() {
+        assertEquals(new QuantityType("50 °C"), new QuantityType("20 °C").add(new QuantityType("30 °C")));
+        assertEquals(new QuantityType("50 °C"), new QuantityType("20 °C").add(new QuantityType("30 K")));
+        assertEquals(new QuantityType("50 °C"), new QuantityType("20 °C").add(new QuantityType("54 °F")));
+        assertEquals(new QuantityType("50 K"), new QuantityType("20 K").add(new QuantityType("30 °C")));
+        assertEquals(new QuantityType("50 K"), new QuantityType("20 K").add(new QuantityType("30 K")));
+        assertEquals(new QuantityType("50 K"), new QuantityType("20 K").add(new QuantityType("54 °F")));
+    }
+
+    @Test
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    public void testIncrementalSubtract() {
+        assertEquals(new QuantityType("20 °C"), new QuantityType("50 °C").subtract(new QuantityType("30 °C")));
+        assertEquals(new QuantityType("20 °C"), new QuantityType("50 °C").subtract(new QuantityType("30 K")));
+        assertEquals(new QuantityType("20 °C"), new QuantityType("50 °C").subtract(new QuantityType("54 °F")));
+        assertEquals(new QuantityType("20 K"), new QuantityType("50 K").subtract(new QuantityType("30 °C")));
+        assertEquals(new QuantityType("20 K"), new QuantityType("50 K").subtract(new QuantityType("30 K")));
+        assertEquals(new QuantityType("20 K"), new QuantityType("50 K").subtract(new QuantityType("54 °F")));
+    }
+
+    @Test
+    public void testEquals() {
+        QuantityType<Temperature> temp1 = new QuantityType<>("293.15 K");
+        QuantityType<Temperature> temp2 = new QuantityType<>("20 °C");
+        assertTrue(temp1.equals(temp2));
+        assertTrue(temp2.equals(temp1));
+        temp2 = new QuantityType<>("-5 °C");
+        assertFalse(temp1.equals(temp2));
+
+        temp1 = new QuantityType<>("100000 K");
+        temp2 = new QuantityType<>("10 mirek");
+        assertTrue(temp1.equals(temp2));
+        assertTrue(temp2.equals(temp1));
+        temp2 = new QuantityType<>("20 mirek");
+        assertFalse(temp1.equals(temp2));
+
+        temp1 = new QuantityType<>("0.1 MK");
+        temp2 = new QuantityType<>("10 mirek");
+        assertTrue(temp1.equals(temp2));
+        assertTrue(temp2.equals(temp1));
+        temp2 = new QuantityType<>("20 mirek");
+        assertFalse(temp1.equals(temp2));
+    }
+
+    @Test
+    public void testCompareTo() {
+        QuantityType<Temperature> temp1 = new QuantityType<>("293.15 K");
+        QuantityType<Temperature> temp2 = new QuantityType<>("20 °C");
+        assertEquals(0, temp1.compareTo(temp2));
+        temp2 = new QuantityType<>("-5 °C");
+        assertEquals(1, temp1.compareTo(temp2));
+        temp2 = new QuantityType<>("50 °C");
+        assertEquals(-1, temp1.compareTo(temp2));
+
+        QuantityType<Temperature> temp3 = new QuantityType<>("100000 K");
+        QuantityType<Temperature> temp4 = new QuantityType<>("10 mirek");
+        assertThrows(IllegalArgumentException.class, () -> {
+            temp3.compareTo(temp4);
+        });
     }
 }

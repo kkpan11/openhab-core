@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,7 @@
  */
 package org.openhab.core.internal.library.unit;
 
+import java.io.Serial;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.math.MathContext;
@@ -34,6 +35,8 @@ import tech.units.indriya.function.Calculus;
  */
 @NonNullByDefault
 public class CurrencyConverter extends AbstractConverter {
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     private final BigDecimal factor;
 
@@ -103,10 +106,9 @@ public class CurrencyConverter extends AbstractConverter {
             @SuppressWarnings("unchecked")
             Map<Class<? extends AbstractConverter>, Integer> original = (Map<Class<? extends AbstractConverter>, Integer>) field
                     .get(null);
-            original.put(CurrencyConverter.class, 1000);
+            Objects.requireNonNull(original).put(CurrencyConverter.class, 1000);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new IllegalStateException("Could not add currency converter", e);
         }
-
     }
 }

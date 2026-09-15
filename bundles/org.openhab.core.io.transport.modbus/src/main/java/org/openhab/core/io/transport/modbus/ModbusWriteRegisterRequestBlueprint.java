@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -43,7 +43,6 @@ public class ModbusWriteRegisterRequestBlueprint extends ModbusWriteRequestBluep
      */
     public ModbusWriteRegisterRequestBlueprint(int slaveId, int reference, ModbusRegisterArray registers,
             boolean writeMultiple, int maxTries) throws IllegalArgumentException {
-        super();
         this.slaveId = slaveId;
         this.reference = reference;
         this.registers = registers;

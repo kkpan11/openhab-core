@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -70,7 +70,7 @@ public class CommandOption {
         final int prime = 31;
         int result = 1;
         result = prime * result + command.hashCode();
-        result = prime * result + (label != null ? label.hashCode() : 0);
+        result = prime * result + Objects.hashCode(label);
         return result;
     }
 
@@ -91,6 +91,6 @@ public class CommandOption {
 
     @Override
     public String toString() {
-        return String.format("CommandOption [command=%s, label=%s]", command, label);
+        return "CommandOption [command=%s, label=%s]".formatted(command, label);
     }
 }

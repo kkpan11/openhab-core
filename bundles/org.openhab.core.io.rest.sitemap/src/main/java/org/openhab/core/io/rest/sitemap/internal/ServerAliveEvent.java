@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,11 +12,15 @@
  */
 package org.openhab.core.io.rest.sitemap.internal;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * Event to notify the browser that the sitemap has been changed
  *
  * @author Laurent Garnier - Initial contribution
  */
 public class ServerAliveEvent extends SitemapEvent {
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED, accessMode = Schema.AccessMode.READ_ONLY, allowableValues = {
+            "ALIVE" })
     public final String TYPE = "ALIVE";
 }

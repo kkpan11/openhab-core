@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -140,6 +140,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * @author Dimitar Ivanov - replaced Firmware UID with thing UID and firmware version
  * @author Markus Rathgeb - Migrated to JAX-RS Whiteboard Specification
  * @author Wouter Born - Migrated to OpenAPI annotations
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @Component
 @JaxrsResource
@@ -227,7 +228,6 @@ public class ThingResource implements RESTResource {
     @Operation(operationId = "createThingInRegistry", summary = "Creates a new thing and adds it to the registry.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "201", description = "Created", content = @Content(schema = @Schema(implementation = EnrichedThingDTO.class))),
-                    @ApiResponse(responseCode = "400", description = "Thing uid does not match bridge uid."),
                     @ApiResponse(responseCode = "400", description = "A uid must be provided, if no binding can create a thing of this type."),
                     @ApiResponse(responseCode = "409", description = "A thing with the same uid already exists.") })
     public Response create(
@@ -252,11 +252,6 @@ public class ThingResource implements RESTResource {
 
         if (thingBean.bridgeUID != null) {
             bridgeUID = new ThingUID(thingBean.bridgeUID);
-            if (thingUID != null && (!thingUID.getBindingId().equals(bridgeUID.getBindingId())
-                    || !thingUID.getBridgeIds().contains(bridgeUID.getId()))) {
-                return Response.status(Status.BAD_REQUEST)
-                        .entity("Thing UID '" + thingUID + "' does not match bridge UID '" + bridgeUID + "'").build();
-            }
         }
 
         // turn the ThingDTO's configuration into a Configuration
@@ -326,14 +321,15 @@ public class ThingResource implements RESTResource {
                 lastModified = Date.from(Instant.now().truncatedTo(ChronoUnit.SECONDS));
             }
 
-            thingStream = dtoMapper.limitToFields(thingStream, "UID,label,bridgeUID,thingTypeUID,location,editable");
+            thingStream = dtoMapper.limitToFields(thingStream,
+                    "UID,label,bridgeUID,thingTypeUID,location,editable,semanticEquipmentTag");
             return Response.ok(new Stream2JSONInputStream(thingStream)).lastModified(lastModified)
                     .cacheControl(RESTConstants.CACHE_CONTROL).build();
         }
 
         if (summary != null && summary) {
             thingStream = dtoMapper.limitToFields(thingStream,
-                    "UID,label,bridgeUID,thingTypeUID,statusInfo,firmwareStatus,location,editable");
+                    "UID,label,bridgeUID,thingTypeUID,statusInfo,firmwareStatus,location,editable,semanticEquipmentTag");
         }
         return Response.ok(new Stream2JSONInputStream(thingStream)).build();
     }
@@ -501,7 +497,7 @@ public class ThingResource implements RESTResource {
     public Response updateConfiguration(
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
             @PathParam("thingUID") @Parameter(description = "thing") String thingUID,
-            @Parameter(description = "configuration parameters") @Nullable Map<String, Object> configurationParameters)
+            @Parameter(description = "configuration parameters") @Nullable Map<String, @Nullable Object> configurationParameters)
             throws IOException {
         final Locale locale = localeService.getLocale(language);
 
@@ -788,8 +784,9 @@ public class ThingResource implements RESTResource {
         return linkedItemsMap;
     }
 
-    private @Nullable Map<String, Object> normalizeConfiguration(@Nullable Map<String, Object> properties,
-            ThingTypeUID thingTypeUID, @Nullable ThingUID thingUID) {
+    private @Nullable Map<String, @Nullable Object> normalizeConfiguration(
+            @Nullable Map<String, @Nullable Object> properties, ThingTypeUID thingTypeUID,
+            @Nullable ThingUID thingUID) {
         if (properties == null || properties.isEmpty()) {
             return properties;
         }
@@ -824,7 +821,7 @@ public class ThingResource implements RESTResource {
         return ConfigUtil.normalizeTypes(properties, configDescriptions);
     }
 
-    private @Nullable Map<String, Object> normalizeConfiguration(Map<String, Object> properties,
+    private @Nullable Map<String, @Nullable Object> normalizeConfiguration(Map<String, @Nullable Object> properties,
             ChannelTypeUID channelTypeUID, ChannelUID channelUID) {
         if (properties == null || properties.isEmpty()) {
             return properties;

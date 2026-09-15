@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,9 @@ package org.openhab.core.audio.internal;
 
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.io.IOException;
@@ -68,8 +70,6 @@ public class AudioConsoleTest extends AbstractAudioServletTest {
             consoleOutput = s;
         }
     };
-
-    private final int testTimeout = 5;
 
     @BeforeEach
     public void setUp() throws IOException {
@@ -145,12 +145,14 @@ public class AudioConsoleTest extends AbstractAudioServletTest {
         AudioStream audioStream = getByteArrayAudioStream(testByteArray, AudioFormat.CONTAINER_WAVE,
                 AudioFormat.CODEC_PCM_SIGNED);
 
-        String url = serveStream(audioStream, testTimeout);
+        String url = serveStream(audioStream);
 
         String[] args = { AudioConsoleCommandExtension.SUBCMD_STREAM, url };
         audioConsoleCommandExtension.execute(args, consoleMock);
 
-        assertThat("The streamed URL was not as expected", ((URLAudioStream) audioSink.audioStream).getURL(), is(url));
+        URLAudioStream urlAudioStream = assertInstanceOf(URLAudioStream.class, audioSink.audioStream);
+        assertThat("The streamed URL was not as expected", urlAudioStream.getURL(), is(url));
+        urlAudioStream.close();
     }
 
     @Test
@@ -158,12 +160,14 @@ public class AudioConsoleTest extends AbstractAudioServletTest {
         AudioStream audioStream = getByteArrayAudioStream(testByteArray, AudioFormat.CONTAINER_WAVE,
                 AudioFormat.CODEC_PCM_SIGNED);
 
-        String url = serveStream(audioStream, testTimeout);
+        String url = serveStream(audioStream);
 
         String[] args = { AudioConsoleCommandExtension.SUBCMD_STREAM, audioSink.getId(), url };
         audioConsoleCommandExtension.execute(args, consoleMock);
 
-        assertThat("The streamed URL was not as expected", ((URLAudioStream) audioSink.audioStream).getURL(), is(url));
+        URLAudioStream urlAudioStream = assertInstanceOf(URLAudioStream.class, audioSink.audioStream);
+        assertThat("The streamed URL was not as expected", urlAudioStream.getURL(), is(url));
+        urlAudioStream.close();
     }
 
     @Test

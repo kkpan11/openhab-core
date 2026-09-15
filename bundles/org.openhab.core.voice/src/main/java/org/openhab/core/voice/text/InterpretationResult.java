@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -48,7 +48,6 @@ public final class InterpretationResult {
      * @param response the textual response. Should be short, localized and understandable by non-technical users.
      */
     public InterpretationResult(String response) {
-        super();
         this.response = response;
         this.success = true;
     }
@@ -59,7 +58,6 @@ public final class InterpretationResult {
      * @param exception the responsible exception
      */
     public InterpretationResult(InterpretationException exception) {
-        super();
         this.exception = exception;
         this.success = false;
     }
@@ -71,7 +69,6 @@ public final class InterpretationResult {
      * @param response the textual response. Should be short, localized and understandable by non-technical users.
      */
     public InterpretationResult(boolean success, String response) {
-        super();
         this.success = success;
         this.response = response;
     }

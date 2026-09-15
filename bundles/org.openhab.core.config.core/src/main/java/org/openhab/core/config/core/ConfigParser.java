@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,10 +12,13 @@
  */
 package org.openhab.core.config.core;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.RecordComponent;
+import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -37,11 +40,13 @@ import org.slf4j.LoggerFactory;
  *
  * @author David Graeff - Initial contribution
  * @author Jan N. Klug - Extended and refactored to an exposed utility class
+ * @author Jacob Laursen - Added full support for Java records
  *
  */
 @NonNullByDefault
 public final class ConfigParser {
     private static final Logger LOGGER = LoggerFactory.getLogger(ConfigParser.class);
+
     private static final Map<String, Class<?>> WRAPPER_CLASSES_MAP = Map.of(//
             "float", Float.class, //
             "double", Double.class, //
@@ -50,6 +55,16 @@ public final class ConfigParser {
             "short", Short.class, //
             "byte", Byte.class, //
             "boolean", Boolean.class);
+
+    private static final Map<Class<?>, Object> PRIMITIVE_DEFAULTS = Map.of( //
+            boolean.class, false, //
+            byte.class, (byte) 0, //
+            short.class, (short) 0, //
+            int.class, 0, //
+            long.class, 0L, //
+            float.class, 0f, //
+            double.class, 0d, //
+            char.class, '\0');
 
     private ConfigParser() {
         // prevent instantiation
@@ -72,75 +87,146 @@ public final class ConfigParser {
      * @param configurationClass The configuration holder class. An instance of this will be created so make sure that
      *            a default constructor is available.
      * @return The configuration holder object. All fields that matched a configuration option are set. If a required
-     *         field is not set, null is returned.
+     *         field is not set, null is returned. For record classes, missing primitives are automatically set to
+     *         their default value.
      */
-    @SuppressWarnings({ "rawtypes", "unchecked" })
     public static <T> @Nullable T configurationAs(Map<String, @Nullable Object> properties,
             Class<T> configurationClass) {
-        T configuration;
         try {
-            configuration = configurationClass.getConstructor().newInstance();
-        } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalAccessException
-                | IllegalArgumentException | InvocationTargetException e) {
+            if (configurationClass.isRecord()) {
+                return constructRecord(properties, configurationClass);
+            } else {
+                return constructClass(properties, configurationClass);
+            }
+        } catch (NoSuchMethodException | InstantiationException | IllegalAccessException
+                | InvocationTargetException e) {
+            LOGGER.warn("Could not create configuration instance of '{}' with properties keys {}: {}",
+                    configurationClass.getName(), properties.keySet(), e.getMessage(), e);
             return null;
         }
+    }
 
-        List<Field> fields = getAllFields(configurationClass);
-        for (Field field : fields) {
+    private static <T> @Nullable T constructClass(Map<String, @Nullable Object> properties, Class<T> configurationClass)
+            throws NoSuchMethodException, InstantiationException, IllegalAccessException, InvocationTargetException {
+        T configuration = configurationClass.getConstructor().newInstance();
+
+        for (Field field : getAllFields(configurationClass)) {
             // Don't try to write to final fields and ignore transient fields
             if (Modifier.isFinal(field.getModifiers()) || Modifier.isTransient(field.getModifiers())) {
                 continue;
             }
-            String fieldName = field.getName();
-            Class<?> type = field.getType();
 
-            Object value = properties.get(fieldName);
+            String fieldName = field.getName();
+            Object rawValue = properties.get(fieldName);
             // Consider RequiredField annotations
-            if (value == null) {
-                LOGGER.trace("Skipping field '{}', because config has no entry for {}", fieldName, fieldName);
+            if (rawValue == null) {
+                LOGGER.trace("Skipping field '{}', because config has no entry for it", fieldName);
                 continue;
             }
 
-            // Allows to have List<int>, List<Double>, List<String> etc (and the corresponding Set<?>)
-            if (value instanceof Collection collection1) {
-                Class<?> innerClass = (Class<?>) ((ParameterizedType) field.getGenericType())
-                        .getActualTypeArguments()[0];
-                Collection collection;
-                if (List.class.isAssignableFrom(type)) {
-                    collection = new ArrayList<>();
-                } else if (Set.class.isAssignableFrom(type)) {
-                    collection = new HashSet<>();
-                } else {
-                    LOGGER.warn("Skipping field '{}', only List and Set is supported as target Collection", fieldName);
-                    continue;
-                }
-                for (final Object it : collection1) {
-                    final Object normalized = valueAs(it, innerClass);
-                    if (normalized == null) {
-                        continue;
-                    }
-                    collection.add(normalized);
-                }
-                value = collection;
-            }
+            Object value = convertValue(rawValue, field.getType(), field.getGenericType(), fieldName);
 
-            try {
-                value = valueAs(value, type);
-                if (value == null) {
-                    LOGGER.warn(
-                            "Could not set value for field '{}' because conversion failed. Check your configuration value.",
-                            fieldName);
-                    continue;
+            if (value != null) {
+                try {
+                    LOGGER.trace("Setting value ({}) {} to field '{}' in configuration class {}",
+                            field.getType().getSimpleName(), value, fieldName, configurationClass.getName());
+                    field.setAccessible(true);
+                    field.set(configuration, value);
+                } catch (IllegalAccessException e) {
+                    LOGGER.warn("Could not set field value for field '{}': {}", fieldName, e.getMessage(), e);
                 }
-                LOGGER.trace("Setting value ({}) {} to field '{}' in configuration class {}", type.getSimpleName(),
-                        value, fieldName, configurationClass.getName());
-                field.setAccessible(true);
-                field.set(configuration, value);
-            } catch (SecurityException | IllegalArgumentException | IllegalAccessException ex) {
-                LOGGER.warn("Could not set field value for field '{}': {}", fieldName, ex.getMessage(), ex);
             }
         }
+
         return configuration;
+    }
+
+    private static <T> @Nullable T constructRecord(Map<String, @Nullable Object> properties,
+            Class<T> configurationClass)
+            throws NoSuchMethodException, InstantiationException, IllegalAccessException, InvocationTargetException {
+        Constructor<?> constructor = getCanonicalRecordConstructor(configurationClass);
+
+        RecordComponent[] components = configurationClass.getRecordComponents();
+        Object[] args = new Object[components.length];
+
+        for (int i = 0; i < components.length; i++) {
+            RecordComponent component = components[i];
+
+            String name = component.getName();
+            Object rawValue = properties.get(name);
+            if (rawValue == null) {
+                LOGGER.trace("Skipping component '{}', because config has no entry for it", name);
+            }
+            Object value = rawValue != null
+                    ? convertValue(rawValue, component.getType(), component.getGenericType(), name)
+                    : null;
+
+            if (value == null) {
+                if (component.getType().isPrimitive()) {
+                    value = defaultValue(component.getType());
+                    LOGGER.trace("Setting default value ({}) {} to component '{}' in configuration class {}",
+                            component.getType().getSimpleName(), value, name, configurationClass.getName());
+                }
+            } else {
+                LOGGER.trace("Setting value ({}) {} to component '{}' in configuration class {}",
+                        component.getType().getSimpleName(), value, name, configurationClass.getName());
+            }
+
+            args[i] = value;
+        }
+
+        return configurationClass.cast(constructor.newInstance(args));
+    }
+
+    private static <T> Constructor<T> getCanonicalRecordConstructor(Class<T> clazz) throws NoSuchMethodException {
+        Class<?>[] parameterTypes = Arrays.stream(clazz.getRecordComponents()).map(RecordComponent::getType)
+                .toArray(Class<?>[]::new);
+        Constructor<T> constructor = clazz.getDeclaredConstructor(parameterTypes);
+        constructor.setAccessible(true);
+
+        return constructor;
+    }
+
+    private static @Nullable Object convertValue(Object value, Class<?> type, @Nullable Type genericType,
+            String fieldName) {
+        // Allows to have List<int>, List<Double>, List<String> etc (and the corresponding Set<?>)
+        if (value instanceof Collection<?> valueCollection) {
+            Collection<Object> collection = List.class.isAssignableFrom(type) ? new ArrayList<>()
+                    : Set.class.isAssignableFrom(type) ? new HashSet<>() : null;
+
+            if (collection == null) {
+                LOGGER.warn("Skipping field '{}', only List and Set are supported as target collection types",
+                        fieldName);
+                return null;
+            }
+
+            if (!(genericType instanceof ParameterizedType parameterizedType)) {
+                LOGGER.warn("Skipping field '{}', target collection type must declare a generic element type",
+                        fieldName);
+                return null;
+            }
+
+            Type innerType = parameterizedType.getActualTypeArguments()[0];
+
+            if (innerType instanceof Class<?> innerClass) {
+                valueCollection.stream().map(it -> valueAs(it, innerClass)).filter(Objects::nonNull)
+                        .forEach(collection::add);
+                return collection;
+            } else {
+                LOGGER.warn(
+                        "Skipping field '{}', collection element type '{}' is not supported (only simple class element types are supported)",
+                        fieldName, innerType.getTypeName());
+                return null;
+            }
+        }
+
+        Object converted = valueAs(value, type);
+        if (converted == null) {
+            LOGGER.warn("Could not set value for field '{}' because conversion failed. Check your configuration value.",
+                    fieldName);
+        }
+
+        return converted;
     }
 
     /**
@@ -155,6 +241,14 @@ public final class ConfigParser {
             fields.addAll(Arrays.asList(superclazz.getDeclaredFields()));
         }
         return fields;
+    }
+
+    private static Object defaultValue(Class<?> type) {
+        Object value = PRIMITIVE_DEFAULTS.get(type);
+        if (value != null) {
+            return value;
+        }
+        throw new IllegalArgumentException("Unsupported primitive type: " + type);
     }
 
     /**
@@ -176,7 +270,7 @@ public final class ConfigParser {
      * @param type desired target class
      * @return the converted value or null if conversion fails or input value is null
      */
-    @SuppressWarnings({ "rawtypes", "unchecked" })
+    @SuppressWarnings("unchecked")
     public static <T> @Nullable T valueAs(@Nullable Object value, Class<T> type) {
         if (value == null || type.isAssignableFrom(value.getClass())) {
             // exit early if value is null or type is already compatible
@@ -186,59 +280,63 @@ public final class ConfigParser {
         // make sure primitives are converted to their respective wrapper class
         Class<?> typeClass = WRAPPER_CLASSES_MAP.getOrDefault(type.getSimpleName(), type);
 
-        Object result = value;
-        // Handle the conversion case of Number to Float,Double,Long,Integer,Short,Byte,BigDecimal
-        if (value instanceof Number number) {
-            if (Float.class.equals(typeClass)) {
-                result = number.floatValue();
-            } else if (Double.class.equals(typeClass)) {
-                result = number.doubleValue();
-            } else if (Long.class.equals(typeClass)) {
-                result = number.longValue();
-            } else if (Integer.class.equals(typeClass)) {
-                result = number.intValue();
-            } else if (Short.class.equals(typeClass)) {
-                result = number.shortValue();
-            } else if (Byte.class.equals(typeClass)) {
-                result = number.byteValue();
-            } else if (BigDecimal.class.equals(typeClass)) {
-                result = new BigDecimal(number.toString());
+        try {
+            Object result = value;
+            // Handle the conversion case of Number to Float,Double,Long,Integer,Short,Byte,BigDecimal
+            if (value instanceof Number number) {
+                if (Float.class.equals(typeClass)) {
+                    result = number.floatValue();
+                } else if (Double.class.equals(typeClass)) {
+                    result = number.doubleValue();
+                } else if (Long.class.equals(typeClass)) {
+                    result = number.longValue();
+                } else if (Integer.class.equals(typeClass)) {
+                    result = number.intValue();
+                } else if (Short.class.equals(typeClass)) {
+                    result = number.shortValue();
+                } else if (Byte.class.equals(typeClass)) {
+                    result = number.byteValue();
+                } else if (BigDecimal.class.equals(typeClass)) {
+                    result = new BigDecimal(number.toString());
+                }
+            } else if (value instanceof String strValue && !String.class.equals(typeClass)) {
+                // Handle the conversion case of String to Float,Double,Long,Integer,BigDecimal,Boolean
+                if (Float.class.equals(typeClass)) {
+                    result = Float.valueOf(strValue);
+                } else if (Double.class.equals(typeClass)) {
+                    result = Double.valueOf(strValue);
+                } else if (Long.class.equals(typeClass)) {
+                    result = Long.valueOf(strValue);
+                } else if (Integer.class.equals(typeClass)) {
+                    result = Integer.valueOf(strValue);
+                } else if (Short.class.equals(typeClass)) {
+                    result = Short.valueOf(strValue);
+                } else if (Byte.class.equals(typeClass)) {
+                    result = Byte.valueOf(strValue);
+                } else if (BigDecimal.class.equals(typeClass)) {
+                    result = new BigDecimal(strValue);
+                } else if (Boolean.class.equals(typeClass)) {
+                    result = Boolean.valueOf(strValue);
+                } else if (type.isEnum()) {
+                    @SuppressWarnings("rawtypes")
+                    final Class<? extends Enum> enumType = (Class<? extends Enum>) typeClass;
+                    result = Enum.valueOf(enumType, value.toString());
+                } else if (Set.class.isAssignableFrom(typeClass)) {
+                    result = Set.of(value);
+                } else if (Collection.class.isAssignableFrom(typeClass)) {
+                    result = List.of(value);
+                }
             }
-        } else if (value instanceof String strValue && !String.class.equals(typeClass)) {
-            // Handle the conversion case of String to Float,Double,Long,Integer,BigDecimal,Boolean
-            if (Float.class.equals(typeClass)) {
-                result = Float.valueOf(strValue);
-            } else if (Double.class.equals(typeClass)) {
-                result = Double.valueOf(strValue);
-            } else if (Long.class.equals(typeClass)) {
-                result = Long.valueOf(strValue);
-            } else if (Integer.class.equals(typeClass)) {
-                result = Integer.valueOf(strValue);
-            } else if (Short.class.equals(typeClass)) {
-                result = Short.valueOf(strValue);
-            } else if (Byte.class.equals(typeClass)) {
-                result = Byte.valueOf(strValue);
-            } else if (BigDecimal.class.equals(typeClass)) {
-                result = new BigDecimal(strValue);
-            } else if (Boolean.class.equals(typeClass)) {
-                result = Boolean.valueOf(strValue);
-            } else if (type.isEnum()) {
-                final Class<? extends Enum> enumType = (Class<? extends Enum>) typeClass;
-                result = Enum.valueOf(enumType, value.toString());
-            } else if (Set.class.isAssignableFrom(typeClass)) {
-                result = Set.of(value);
-            } else if (Collection.class.isAssignableFrom(typeClass)) {
-                result = List.of(value);
+            if (result != null && typeClass.isAssignableFrom(result.getClass())) {
+                return (T) result;
             }
+            LOGGER.warn("Conversion of value '{}' with type '{}' to '{}' failed. Returning null", value,
+                    value.getClass(), type);
+            return null;
+        } catch (RuntimeException e) {
+            LOGGER.warn("Conversion of value '{}' with type '{}' to '{}' failed: {}. Returning null", value,
+                    value.getClass(), type, e.getMessage());
+            return null;
         }
-
-        if (result != null && typeClass.isAssignableFrom(result.getClass())) {
-            return (T) result;
-        }
-
-        LOGGER.warn("Conversion of value '{}' with type '{}' to '{}' failed. Returning null", value, value.getClass(),
-                type);
-
-        return null;
     }
 }

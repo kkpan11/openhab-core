@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
@@ -49,6 +50,7 @@ import org.slf4j.LoggerFactory;
  * @author Kai Kreuzer - Refactored API
  * @author Dennis Nobel - Added background discovery configuration through Configuration Admin
  * @author Andre Fuechsel - Added removeOlderResults
+ * @author Laurent Garnier - Added discovery with an optional input parameter
  */
 @NonNullByDefault
 public abstract class AbstractDiscoveryService implements DiscoveryService {
@@ -57,20 +59,29 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
 
     private final Logger logger = LoggerFactory.getLogger(AbstractDiscoveryService.class);
 
-    protected final ScheduledExecutorService scheduler = ThreadPoolManager.getScheduledPool(DISCOVERY_THREADPOOL_NAME);
+    protected final ScheduledExecutorService scheduler;
 
     private final Set<DiscoveryListener> discoveryListeners = new CopyOnWriteArraySet<>();
-    protected @Nullable ScanListener scanListener = null;
 
-    private boolean backgroundDiscoveryEnabled;
+    // All access must be guarded by "this"
+    protected @Nullable ScanListener scanListener;
 
+    private volatile boolean backgroundDiscoveryEnabled;
+
+    private final @Nullable String scanInputLabel;
+    private final @Nullable String scanInputDescription;
+
+    // All access must be guarded by "cachedResults"
     private final Map<ThingUID, DiscoveryResult> cachedResults = new HashMap<>();
 
+    // This set is immutable and can safely be shared between threads
     private final Set<ThingTypeUID> supportedThingTypes;
     private final int timeout;
 
+    // All access must be guarded by "this"
     private Instant timestampOfLastScan = Instant.MIN;
 
+    // All access must be guarded by "this"
     private @Nullable ScheduledFuture<?> scheduledStop;
 
     protected @NonNullByDefault({}) TranslationProvider i18nProvider;
@@ -84,20 +95,77 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
      *            service automatically stops its forced discovery process (>= 0).
      * @param backgroundDiscoveryEnabledByDefault defines, whether the default for this discovery service is to
      *            enable background discovery or not.
+     * @param scanInputLabel the label of the optional input parameter to start the discovery or null if no input
+     *            parameter supported
+     * @param scanInputDescription the description of the optional input parameter to start the discovery or null if no
+     *            input parameter supported
+     * @throws IllegalArgumentException if {@code timeout < 0}
+     */
+    protected AbstractDiscoveryService(@Nullable Set<ThingTypeUID> supportedThingTypes, int timeout,
+            boolean backgroundDiscoveryEnabledByDefault, @Nullable String scanInputLabel,
+            @Nullable String scanInputDescription) throws IllegalArgumentException {
+        if (timeout < 0) {
+            throw new IllegalArgumentException("The timeout must be >= 0!");
+        }
+        this.scheduler = ThreadPoolManager.getScheduledPool(DISCOVERY_THREADPOOL_NAME);
+        this.supportedThingTypes = supportedThingTypes == null ? Set.of() : Set.copyOf(supportedThingTypes);
+        this.timeout = timeout;
+        this.backgroundDiscoveryEnabled = backgroundDiscoveryEnabledByDefault;
+        this.scanInputLabel = scanInputLabel;
+        this.scanInputDescription = scanInputDescription;
+    }
+
+    /**
+     * Creates a new instance of this class with the specified parameters.
+     * <p>
+     * <b>For use by tests only</b>, allows setting a different {@link ScheduledExecutorService} like
+     * {@link org.openhab.core.util.SameThreadExecutorService} for synchronous behavior during testing.
+     *
+     * @param scheduler the {@link ScheduledExecutorService} to use.
+     * @param supportedThingTypes the list of Thing types which are supported (can be null)
+     * @param timeout the discovery timeout in seconds after which the discovery
+     *            service automatically stops its forced discovery process (>= 0).
+     * @param backgroundDiscoveryEnabledByDefault defines, whether the default for this discovery service is to
+     *            enable background discovery or not.
+     * @param scanInputLabel the label of the optional input parameter to start the discovery or null if no input
+     *            parameter supported
+     * @param scanInputDescription the description of the optional input parameter to start the discovery or null if no
+     *            input parameter supported
+     * @throws IllegalArgumentException if {@code timeout < 0}
+     */
+    protected AbstractDiscoveryService(ScheduledExecutorService scheduler,
+            @Nullable Set<ThingTypeUID> supportedThingTypes, int timeout, boolean backgroundDiscoveryEnabledByDefault,
+            @Nullable String scanInputLabel, @Nullable String scanInputDescription) throws IllegalArgumentException {
+        if (timeout < 0) {
+            throw new IllegalArgumentException("The timeout must be >= 0!");
+        }
+        this.scheduler = scheduler;
+        this.supportedThingTypes = supportedThingTypes == null ? Set.of() : Set.copyOf(supportedThingTypes);
+        this.timeout = timeout;
+        this.backgroundDiscoveryEnabled = backgroundDiscoveryEnabledByDefault;
+        this.scanInputLabel = scanInputLabel;
+        this.scanInputDescription = scanInputDescription;
+    }
+
+    /**
+     * Creates a new instance of this class with the specified parameters and no input parameter supported to start the
+     * discovery.
+     *
+     * @param supportedThingTypes the list of Thing types which are supported (can be null)
+     * @param timeout the discovery timeout in seconds after which the discovery
+     *            service automatically stops its forced discovery process (>= 0).
+     * @param backgroundDiscoveryEnabledByDefault defines, whether the default for this discovery service is to
+     *            enable background discovery or not.
      * @throws IllegalArgumentException if {@code timeout < 0}
      */
     protected AbstractDiscoveryService(@Nullable Set<ThingTypeUID> supportedThingTypes, int timeout,
             boolean backgroundDiscoveryEnabledByDefault) throws IllegalArgumentException {
-        if (timeout < 0) {
-            throw new IllegalArgumentException("The timeout must be >= 0!");
-        }
-        this.supportedThingTypes = supportedThingTypes == null ? Set.of() : Set.copyOf(supportedThingTypes);
-        this.timeout = timeout;
-        this.backgroundDiscoveryEnabled = backgroundDiscoveryEnabledByDefault;
+        this(supportedThingTypes, timeout, backgroundDiscoveryEnabledByDefault, null, null);
     }
 
     /**
-     * Creates a new instance of this class with the specified parameters and background discovery enabled.
+     * Creates a new instance of this class with the specified parameters and background discovery enabled
+     * and no input parameter supported to start the discovery.
      *
      * @param supportedThingTypes the list of Thing types which are supported (can be null)
      * @param timeout the discovery timeout in seconds after which the discovery service
@@ -111,7 +179,8 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
     }
 
     /**
-     * Creates a new instance of this class with the specified parameters and background discovery enabled.
+     * Creates a new instance of this class with the specified parameters and background discovery enabled
+     * and no input parameter supported to start the discovery.
      *
      * @param timeout the discovery timeout in seconds after which the discovery service
      *            automatically stops its forced discovery process (>= 0).
@@ -131,6 +200,21 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
     @Override
     public Set<ThingTypeUID> getSupportedThingTypes() {
         return supportedThingTypes;
+    }
+
+    @Override
+    public boolean isScanInputSupported() {
+        return getScanInputLabel() != null && getScanInputDescription() != null;
+    }
+
+    @Override
+    public @Nullable String getScanInputLabel() {
+        return scanInputLabel;
+    }
+
+    @Override
+    public @Nullable String getScanInputDescription() {
+        return scanInputDescription;
     }
 
     /**
@@ -154,12 +238,14 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
         if (listener == null) {
             return;
         }
-        synchronized (cachedResults) {
-            for (DiscoveryResult cachedResult : cachedResults.values()) {
-                listener.thingDiscovered(this, cachedResult);
-            }
-        }
         discoveryListeners.add(listener);
+        Map<ThingUID, DiscoveryResult> existingResults;
+        synchronized (cachedResults) {
+            existingResults = Map.copyOf(cachedResults);
+        }
+        for (DiscoveryResult existingResult : existingResults.values()) {
+            listener.thingDiscovered(this, existingResult);
+        }
     }
 
     @Override
@@ -168,11 +254,19 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
     }
 
     @Override
-    public synchronized void startScan(@Nullable ScanListener listener) {
+    public void startScan(@Nullable ScanListener listener) {
+        startScanInternal(null, listener);
+    }
+
+    @Override
+    public void startScan(String input, @Nullable ScanListener listener) {
+        startScanInternal(input, listener);
+    }
+
+    private void startScanInternal(@Nullable String input, @Nullable ScanListener listener) {
+        // we first stop any currently running scan and its scheduled stop call
+        stopScan();
         synchronized (this) {
-            // we first stop any currently running scan and its scheduled stop
-            // call
-            stopScan();
             ScheduledFuture<?> scheduledStop = this.scheduledStop;
             if (scheduledStop != null) {
                 scheduledStop.cancel(false);
@@ -192,35 +286,41 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
                 }, getScanTimeout(), TimeUnit.SECONDS);
             }
             timestampOfLastScan = Instant.now();
-
-            try {
+        }
+        try {
+            if (isScanInputSupported() && input != null) {
+                startScan(input);
+            } else {
                 startScan();
-            } catch (Exception ex) {
-                scheduledStop = this.scheduledStop;
+            }
+        } catch (Exception ex) {
+            synchronized (this) {
+                ScheduledFuture<?> scheduledStop = this.scheduledStop;
                 if (scheduledStop != null) {
                     scheduledStop.cancel(false);
                     this.scheduledStop = null;
                 }
                 scanListener = null;
-                throw ex;
             }
+            throw ex;
         }
     }
 
     @Override
-    public synchronized void abortScan() {
+    public void abortScan() {
+        ScanListener scanListener = null;
         synchronized (this) {
             ScheduledFuture<?> scheduledStop = this.scheduledStop;
             if (scheduledStop != null) {
-                scheduledStop.cancel(false);
+                scheduledStop.cancel(true);
                 this.scheduledStop = null;
             }
-            final ScanListener scanListener = this.scanListener;
-            if (scanListener != null) {
-                Exception e = new CancellationException("Scan has been aborted.");
-                scanListener.onErrorOccurred(e);
-                this.scanListener = null;
-            }
+            scanListener = this.scanListener;
+            this.scanListener = null;
+        }
+        if (scanListener != null) {
+            Exception e = new CancellationException("Scan has been aborted.");
+            scanListener.onErrorOccurred(e);
         }
     }
 
@@ -232,32 +332,52 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
      */
     protected abstract void startScan();
 
+    // An abstract method would have required a change in all existing bindings implementing a DiscoveryService
+    protected void startScan(String input) {
+        logger.warn("Discovery with input parameter not implemented by service '{}'!", this.getClass().getName());
+    }
+
     /**
      * This method cleans up after a scan, i.e. it removes listeners and other required operations.
      */
-    protected synchronized void stopScan() {
-        ScanListener scanListener = this.scanListener;
+    protected void stopScan() {
+        ScanListener scanListener = null;
+        synchronized (this) {
+            scanListener = this.scanListener;
+            this.scanListener = null;
+        }
         if (scanListener != null) {
             scanListener.onFinished();
-            this.scanListener = null;
         }
     }
 
     /**
      * Notifies the registered {@link DiscoveryListener}s about a discovered device.
      *
-     * @param discoveryResult Holds the information needed to identify the discovered device.
+     * @param discoveryResult the {@link DiscoveryResult} to send to listeners.
      */
     protected void thingDiscovered(final DiscoveryResult discoveryResult) {
-        final DiscoveryResult discoveryResultNew = getLocalizedDiscoveryResult(discoveryResult,
-                FrameworkUtil.getBundle(this.getClass()));
+        thingDiscovered(discoveryResult, FrameworkUtil.getBundle(this.getClass()));
+    }
+
+    /**
+     * Notifies the registered {@link DiscoveryListener}s about a discovered device, localizing the results
+     * using the specified {@link Bundle}.
+     *
+     * @param discoveryResult the {@link DiscoveryResult} to send to listeners.
+     * @param bundle the {@link Bundle} to use when looking up translations.
+     */
+    protected void thingDiscovered(final DiscoveryResult discoveryResult, @Nullable Bundle bundle) {
+        final DiscoveryResult discoveryResultNew = getLocalizedDiscoveryResult(discoveryResult, bundle);
         for (DiscoveryListener discoveryListener : discoveryListeners) {
-            try {
-                discoveryListener.thingDiscovered(this, discoveryResultNew);
-            } catch (Exception e) {
-                logger.error("An error occurred while calling the discovery listener {}.",
-                        discoveryListener.getClass().getName(), e);
-            }
+            scheduler.execute(() -> {
+                try {
+                    discoveryListener.thingDiscovered(this, discoveryResultNew);
+                } catch (Exception e) {
+                    logger.error("An error occurred while calling the discovery listener {}.",
+                            discoveryListener.getClass().getName(), e);
+                }
+            });
         }
         synchronized (cachedResults) {
             cachedResults.put(discoveryResultNew.getThingUID(), discoveryResultNew);
@@ -291,7 +411,7 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
      *
      * @param timestamp timestamp, older results will be removed
      */
-    protected void removeOlderResults(long timestamp) {
+    protected void removeOlderResults(Instant timestamp) {
         removeOlderResults(timestamp, null, null);
     }
 
@@ -304,7 +424,7 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
      * @param timestamp timestamp, older results will be removed
      * @param bridgeUID if not {@code null} only results of that bridge are being removed
      */
-    protected void removeOlderResults(long timestamp, @Nullable ThingUID bridgeUID) {
+    protected void removeOlderResults(Instant timestamp, @Nullable ThingUID bridgeUID) {
         removeOlderResults(timestamp, null, bridgeUID);
     }
 
@@ -320,20 +440,24 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
      *            instead
      * @param bridgeUID if not {@code null} only results of that bridge are being removed
      */
-    protected void removeOlderResults(long timestamp, @Nullable Collection<ThingTypeUID> thingTypeUIDs,
+    protected void removeOlderResults(Instant timestamp, @Nullable Collection<ThingTypeUID> thingTypeUIDs,
             @Nullable ThingUID bridgeUID) {
-        Collection<ThingUID> removedThings = null;
+        Set<ThingUID> removedThings = new HashSet<>();
 
+        Collection<ThingUID> removed;
         Collection<ThingTypeUID> toBeRemoved = thingTypeUIDs != null ? thingTypeUIDs : getSupportedThingTypes();
         for (DiscoveryListener discoveryListener : discoveryListeners) {
             try {
-                removedThings = discoveryListener.removeOlderResults(this, timestamp, toBeRemoved, bridgeUID);
+                removed = discoveryListener.removeOlderResults(this, timestamp, toBeRemoved, bridgeUID);
+                if (removed != null) {
+                    removedThings.addAll(removed);
+                }
             } catch (Exception e) {
                 logger.error("An error occurred while calling the discovery listener {}.",
                         discoveryListener.getClass().getName(), e);
             }
         }
-        if (removedThings != null) {
+        if (!removedThings.isEmpty()) {
             synchronized (cachedResults) {
                 for (ThingUID uid : removedThings) {
                     cachedResults.remove(uid);
@@ -422,10 +546,10 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
     /**
      * Get the timestamp of the last call of {@link #startScan()}.
      *
-     * @return timestamp as long
+     * @return timestamp as {@link Instant}
      */
-    protected long getTimestampOfLastScan() {
-        return Instant.MIN.equals(timestampOfLastScan) ? 0 : timestampOfLastScan.toEpochMilli();
+    protected synchronized Instant getTimestampOfLastScan() {
+        return timestampOfLastScan;
     }
 
     private String inferKey(DiscoveryResult discoveryResult, String lastSegment) {
@@ -434,6 +558,8 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
 
     protected DiscoveryResult getLocalizedDiscoveryResult(final DiscoveryResult discoveryResult,
             @Nullable Bundle bundle) {
+        TranslationProvider i18nProvider = this.i18nProvider;
+        LocaleProvider localeProvider = this.localeProvider;
         if (i18nProvider != null && localeProvider != null) {
             String currentLabel = discoveryResult.getLabel();
 
@@ -447,11 +573,7 @@ public abstract class AbstractDiscoveryService implements DiscoveryService {
             if (currentLabel.equals(label)) {
                 return discoveryResult;
             } else {
-                return DiscoveryResultBuilder.create(discoveryResult.getThingUID())
-                        .withThingType(discoveryResult.getThingTypeUID()).withBridge(discoveryResult.getBridgeUID())
-                        .withProperties(discoveryResult.getProperties())
-                        .withRepresentationProperty(discoveryResult.getRepresentationProperty()).withLabel(label)
-                        .withTTL(discoveryResult.getTimeToLive()).build();
+                return DiscoveryResultBuilder.create(discoveryResult).withLabel(label).build();
             }
         } else {
             return discoveryResult;

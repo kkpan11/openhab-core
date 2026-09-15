@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -78,6 +78,44 @@ public class SemanticTags {
             }
         } else {
             return null;
+        }
+    }
+
+    /**
+     * Determines the semantic root of a given tag type.
+     *
+     * @param type the tag type
+     * @return the semantic root of the tag type, or null if the type is not a semantic tag
+     */
+    public static @Nullable Class<? extends Tag> getSemanticRoot(Class<? extends Tag> type) {
+        if (type == null) {
+            return null;
+        }
+        if (Point.class.isAssignableFrom(type)) {
+            return Point.class;
+        } else if (Property.class.isAssignableFrom(type)) {
+            return Property.class;
+        } else if (Location.class.isAssignableFrom(type)) {
+            return Location.class;
+        } else if (Equipment.class.isAssignableFrom(type)) {
+            return Equipment.class;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Determines the name of the semantic root of a given tag type.
+     *
+     * @param type the tag type
+     * @return the name of the semantic root of the tag type, or an empty string if the type is not a semantic tag
+     */
+    public static String getSemanticRootName(Class<? extends Tag> type) {
+        Class<? extends Tag> semanticRoot = getSemanticRoot(type);
+        if (semanticRoot != null) {
+            return semanticRoot.getSimpleName();
+        } else {
+            return "";
         }
     }
 

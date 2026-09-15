@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,6 +13,7 @@
 package org.openhab.core.io.http.auth.internal;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.util.Map;
 
 import javax.servlet.Servlet;
@@ -21,9 +22,9 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.openhab.core.auth.AuthenticatedUser;
 import org.openhab.core.auth.AuthenticationException;
 import org.openhab.core.auth.AuthenticationProvider;
-import org.openhab.core.auth.ManagedUser;
 import org.openhab.core.auth.User;
 import org.openhab.core.auth.UserRegistry;
 import org.openhab.core.i18n.LocaleProvider;
@@ -46,6 +47,7 @@ import org.osgi.service.http.whiteboard.propertytypes.HttpWhiteboardServletPatte
 @HttpWhiteboardServletPattern(CreateAPITokenPageServlet.SERVLET_PATH + "/*")
 public class CreateAPITokenPageServlet extends AbstractAuthPageServlet {
 
+    @Serial
     private static final long serialVersionUID = 5340598701104679843L;
     public static final String SERVLET_PATH = "/createApiToken";
 
@@ -99,8 +101,9 @@ public class CreateAPITokenPageServlet extends AbstractAuthPageServlet {
             User user = login(username, password);
             String newApiToken;
 
-            if (user instanceof ManagedUser managedUser) {
-                if (managedUser.getApiTokens().stream().anyMatch(apiToken -> apiToken.getName().equals(tokenName))) {
+            if (user instanceof AuthenticatedUser authenticatedUser) {
+                if (authenticatedUser.getApiTokens().stream()
+                        .anyMatch(apiToken -> apiToken.getName().equals(tokenName))) {
                     resp.setContentType("text/html;charset=UTF-8");
                     resp.getWriter().append(
                             getPageBody(params, getLocalizedMessage("auth.createapitoken.name.unique.fail"), false));
@@ -117,7 +120,7 @@ public class CreateAPITokenPageServlet extends AbstractAuthPageServlet {
                 }
                 newApiToken = userRegistry.addUserApiToken(user, tokenName, tokenScope);
             } else {
-                throw new AuthenticationException("User is not managed");
+                throw new AuthenticationException("User authentication is not managed by openHAB");
             }
 
             String resultMessage = getLocalizedMessage("auth.createapitoken.success") + "<br /><br /><code>"

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -22,7 +22,6 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.ResourceBundle;
 import java.util.Set;
 
 import javax.measure.Quantity;
@@ -70,6 +69,7 @@ import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.i18n.TranslationProvider;
 import org.openhab.core.i18n.UnitProvider;
 import org.openhab.core.library.dimension.ArealDensity;
+import org.openhab.core.library.dimension.CalorificValue;
 import org.openhab.core.library.dimension.Currency;
 import org.openhab.core.library.dimension.DataAmount;
 import org.openhab.core.library.dimension.DataTransferRate;
@@ -78,7 +78,10 @@ import org.openhab.core.library.dimension.ElectricConductivity;
 import org.openhab.core.library.dimension.EmissionIntensity;
 import org.openhab.core.library.dimension.EnergyPrice;
 import org.openhab.core.library.dimension.Intensity;
+import org.openhab.core.library.dimension.RadiantExposure;
+import org.openhab.core.library.dimension.RadiationDoseRate;
 import org.openhab.core.library.dimension.RadiationSpecificActivity;
+import org.openhab.core.library.dimension.VolumePrice;
 import org.openhab.core.library.dimension.VolumetricFlowRate;
 import org.openhab.core.library.types.PointType;
 import org.openhab.core.library.unit.CurrencyUnits;
@@ -100,7 +103,8 @@ import org.slf4j.LoggerFactory;
  * and {@link LocationProvider} service interfaces.
  *
  * <p>
- * This implementation uses the i18n mechanism of Java ({@link ResourceBundle}) to translate a given key into text. The
+ * This implementation uses the i18n mechanism of Java ({@link java.util.ResourceBundle}) to translate a
+ * given key into text. The
  * resources must be placed under the specific directory {@link LanguageResourceBundleManager#RESOURCE_DIRECTORY} within
  * the certain modules. Each module is tracked in the platform by using the {@link ResourceBundleTracker} and managed by
  * using one certain {@link LanguageResourceBundleManager} which is responsible for the translation.
@@ -114,6 +118,7 @@ import org.slf4j.LoggerFactory;
  * @author Markus Rathgeb - Initial contribution
  * @author Stefan Triller - Initial contribution
  * @author Erdoan Hadzhiyusein - Added time zone
+ * @author Christoph Weitkamp - Added price per volume
  */
 @Component(immediate = true, configurationPid = I18nProviderImpl.CONFIGURATION_PID, property = {
         Constants.SERVICE_PID + "=org.openhab.i18n", //
@@ -134,7 +139,6 @@ public class I18nProviderImpl
     public static final String REGION = "region";
     public static final String VARIANT = "variant";
     private @Nullable Locale locale;
-    private @Nullable String currencyCode;
 
     // TranslationProvider
     private final ResourceBundleTracker resourceBundleTracker;
@@ -301,7 +305,7 @@ public class I18nProviderImpl
 
         if (oldTimeZone != null && this.timeZone == null) {
             logger.info("Time zone is not set, falling back to the default time zone.");
-        } else if (this.timeZone != null && !this.timeZone.equals(oldTimeZone)) {
+        } else if (this.timeZone instanceof ZoneId zId && !zId.equals(oldTimeZone)) {
             logger.info("Time zone set to '{}'.", this.timeZone);
         }
     }
@@ -398,6 +402,7 @@ public class I18nProviderImpl
         addDefaultUnit(dimensionMap, Angle.class, Units.DEGREE_ANGLE, Units.DEGREE_ANGLE);
         addDefaultUnit(dimensionMap, Area.class, SIUnits.SQUARE_METRE, ImperialUnits.SQUARE_FOOT);
         addDefaultUnit(dimensionMap, ArealDensity.class, Units.DOBSON_UNIT);
+        addDefaultUnit(dimensionMap, CalorificValue.class, Units.KILOWATT_HOUR_PER_CUBICMETRE);
         addDefaultUnit(dimensionMap, CatalyticActivity.class, Units.KATAL);
         addDefaultUnit(dimensionMap, Currency.class, CurrencyUnits.BASE_CURRENCY);
         addDefaultUnit(dimensionMap, DataAmount.class, Units.BYTE);
@@ -427,15 +432,20 @@ public class I18nProviderImpl
         addDefaultUnit(dimensionMap, Mass.class, SIUnits.KILOGRAM, ImperialUnits.POUND);
         addDefaultUnit(dimensionMap, Power.class, Units.WATT);
         addDefaultUnit(dimensionMap, Pressure.class, HECTO(SIUnits.PASCAL), ImperialUnits.INCH_OF_MERCURY);
+        addDefaultUnit(dimensionMap, RadiationDoseRate.class, Units.SIEVERT_PER_HOUR);
         addDefaultUnit(dimensionMap, RadiationDoseAbsorbed.class, Units.GRAY);
         addDefaultUnit(dimensionMap, RadiationDoseEffective.class, Units.SIEVERT);
         addDefaultUnit(dimensionMap, RadiationSpecificActivity.class, Units.BECQUEREL_PER_CUBIC_METRE);
+        addDefaultUnit(dimensionMap, RadiantExposure.class, Units.JOULE_PER_SQUARE_METRE);
         addDefaultUnit(dimensionMap, Radioactivity.class, Units.BECQUEREL);
         addDefaultUnit(dimensionMap, SolidAngle.class, Units.STERADIAN);
         addDefaultUnit(dimensionMap, Speed.class, SIUnits.KILOMETRE_PER_HOUR, ImperialUnits.MILES_PER_HOUR);
         addDefaultUnit(dimensionMap, Temperature.class, SIUnits.CELSIUS, ImperialUnits.FAHRENHEIT);
         addDefaultUnit(dimensionMap, Time.class, Units.SECOND);
         addDefaultUnit(dimensionMap, Volume.class, SIUnits.CUBIC_METRE, ImperialUnits.GALLON_LIQUID_US);
+        addDefaultUnit(dimensionMap, VolumePrice.class, CurrencyUnits.PRICE_PER_LITRE);
+        addDefaultUnit(dimensionMap, VolumePrice.class, CurrencyUnits.PRICE_PER_CUBIC_METRE);
+        addDefaultUnit(dimensionMap, VolumePrice.class, CurrencyUnits.PRICE_PER_GALLON_LIQUID_US);
         addDefaultUnit(dimensionMap, VolumetricFlowRate.class, Units.LITRE_PER_MINUTE, ImperialUnits.GALLON_PER_MINUTE);
 
         return dimensionMap;

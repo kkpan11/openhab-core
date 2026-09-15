@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -24,6 +24,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -59,6 +60,7 @@ import org.slf4j.LoggerFactory;
 @Component(name = "org.openhab.core.folder", immediate = true, configurationPid = "org.openhab.folder", configurationPolicy = ConfigurationPolicy.REQUIRE)
 public class FolderObserver implements WatchService.WatchEventListener {
     private final WatchService watchService;
+    private final Path watchPath;
     private final Logger logger = LoggerFactory.getLogger(FolderObserver.class);
 
     /* the model repository is provided as a service */
@@ -88,34 +90,49 @@ public class FolderObserver implements WatchService.WatchEventListener {
         this.modelRepository = modelRepo;
         this.readyService = readyService;
         this.watchService = watchService;
+        this.watchPath = watchService.getWatchPath();
     }
 
-    @Reference(cardinality = ReferenceCardinality.AT_LEAST_ONE, policy = ReferencePolicy.DYNAMIC)
+    @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
     protected void addModelParser(ModelParser modelParser) {
-        String extension = modelParser.getExtension();
-        logger.debug("Adding parser for '{}' extension", extension);
-        parsers.add(extension);
+        String extensionList = modelParser.getExtension();
+        String extensions[] = extensionList.split(",");
+        for (String extension : extensions) {
+            logger.debug("Adding parser for '{}' extension", extension);
+            parsers.add(extension);
+        }
 
         if (activated) {
-            processIgnoredPaths(extension);
-            readyService.markReady(new ReadyMarker(READYMARKER_TYPE, extension));
-            logger.debug("Marked extension '{}' as ready", extension);
+            for (String extension : extensions) {
+                processIgnoredPaths(extension);
+                readyService.markReady(new ReadyMarker(READYMARKER_TYPE, extension));
+                logger.debug("Marked extension '{}' as ready", extension);
+            }
         } else {
             logger.debug("{} is not yet activated", FolderObserver.class.getSimpleName());
         }
     }
 
     protected void removeModelParser(ModelParser modelParser) {
-        String extension = modelParser.getExtension();
-        logger.debug("Removing parser for '{}' extension", extension);
-        parsers.remove(extension);
+        String extensionList = modelParser.getExtension();
+        String extensions[] = extensionList.split(",");
+        for (String extension : extensions) {
+            logger.debug("Removing parser for '{}' extension", extension);
+            parsers.remove(extension);
 
-        Set<String> removed = modelRepository.removeAllModelsOfType(extension);
-        ignoredPaths.addAll(removed.stream().map(namePathMap::get).collect(Collectors.toSet()));
+            Set<String> removed = modelRepository.removeAllModelsOfType(extension);
+            ignoredPaths.addAll(
+                    removed.stream().map(namePathMap::get).filter(Objects::nonNull).collect(Collectors.toSet()));
+        }
     }
 
     @Activate
     public void activate(ComponentContext ctx) {
+        logger.debug("FolderObserver activate");
+
+        /* set of file extensions for added parsers before activation but without an existing directory */
+        Set<String> parsersWithoutFolder = new HashSet<>();
+
         Dictionary<String, Object> config = ctx.getProperties();
 
         Enumeration<String> keys = config.keys();
@@ -127,11 +144,13 @@ public class FolderObserver implements WatchService.WatchEventListener {
                 continue;
             }
 
-            Path folderPath = watchService.getWatchPath().resolve(folderName);
+            Path folderPath = watchPath.resolve(folderName);
+            logger.debug("Extensions set in config for folder {}: {}", folderName, config.get(folderName));
+            Set<String> validExtensions = Set.of(((String) config.get(folderName)).split(","));
             if (Files.exists(folderPath) && Files.isDirectory(folderPath)) {
-                String[] validExtensions = ((String) config.get(folderName)).split(",");
-                folderFileExtMap.put(folderName, Set.of(validExtensions));
+                folderFileExtMap.put(folderName, validExtensions);
             } else {
+                parsersWithoutFolder.addAll(validExtensions);
                 logger.warn("Directory '{}' does not exist in '{}'. Please check your configuration settings!",
                         folderName, OpenHAB.getConfigFolder());
             }
@@ -143,6 +162,15 @@ public class FolderObserver implements WatchService.WatchEventListener {
         this.activated = true;
         logger.debug("{} has been activated", FolderObserver.class.getSimpleName());
 
+        logger.debug("{} elements in parsersWithoutFolder and {} elements in missingParsers",
+                parsersWithoutFolder.size(), missingParsers.size());
+        // process parsers without existing directory which were added during activation
+        for (String extension : parsersWithoutFolder) {
+            if (parsers.contains(extension) && !missingParsers.contains(extension)) {
+                readyService.markReady(new ReadyMarker(READYMARKER_TYPE, extension));
+                logger.debug("Marked extension '{}' as ready", extension);
+            }
+        }
         // process ignored paths for missing parsers which were added during activation
         for (String extension : missingParsers) {
             if (parsers.contains(extension)) {
@@ -191,7 +219,7 @@ public class FolderObserver implements WatchService.WatchEventListener {
                 continue;
             }
 
-            Path folderPath = watchService.getWatchPath().resolve(folderName);
+            Path folderPath = watchPath.resolve(folderName);
             logger.debug("Adding files in '{}' to the model", folderPath);
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(folderPath,
                     new FileExtensionsFilter(validExtensions))) {
@@ -236,7 +264,19 @@ public class FolderObserver implements WatchService.WatchEventListener {
     }
 
     private void checkPath(final Path path, final WatchService.Kind kind) {
+        String fileName = path.getFileName().toString();
         try {
+            // Checking isHidden() on a deleted file will throw an IOException on some file systems,
+            // so deal with deletion first.
+            if (kind == DELETE) {
+                synchronized (FolderObserver.class) {
+                    modelRepository.removeModel(fileName);
+                    namePathMap.remove(fileName);
+                    logger.debug("Removed '{}' model ", fileName);
+                }
+                return;
+            }
+
             if (Files.isHidden(path)) {
                 // we omit parsing of hidden files possibly created by editors or operating systems
                 if (logger.isDebugEnabled()) {
@@ -246,7 +286,6 @@ public class FolderObserver implements WatchService.WatchEventListener {
             }
 
             synchronized (FolderObserver.class) {
-                String fileName = path.getFileName().toString();
                 if (kind == CREATE || kind == MODIFY) {
                     String extension = getExtension(fileName);
                     if (parsers.contains(extension)) {
@@ -267,10 +306,6 @@ public class FolderObserver implements WatchService.WatchEventListener {
                                     path.toAbsolutePath());
                         }
                     }
-                } else if (kind == WatchService.Kind.DELETE) {
-                    modelRepository.removeModel(fileName);
-                    namePathMap.remove(fileName);
-                    logger.debug("Removed '{}' model ", fileName);
                 }
             }
         } catch (Exception e) {
@@ -287,7 +322,8 @@ public class FolderObserver implements WatchService.WatchEventListener {
     }
 
     @Override
-    public void processWatchEvent(WatchService.Kind kind, Path path) {
+    public void processWatchEvent(WatchService.Kind kind, Path fullPath) {
+        Path path = watchPath.relativize(fullPath);
         if (path.getNameCount() != 2) {
             logger.trace("{} event for {} ignored (only depth 1 allowed)", kind, path);
             return;
@@ -310,7 +346,6 @@ public class FolderObserver implements WatchService.WatchEventListener {
             return;
         }
 
-        Path resolvedPath = watchService.getWatchPath().resolve(path);
-        checkPath(resolvedPath, kind);
+        checkPath(fullPath, kind);
     }
 }

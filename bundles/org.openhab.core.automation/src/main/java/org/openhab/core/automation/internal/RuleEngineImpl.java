@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -24,12 +24,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -39,6 +44,7 @@ import org.openhab.core.automation.Condition;
 import org.openhab.core.automation.Module;
 import org.openhab.core.automation.ModuleHandlerCallback;
 import org.openhab.core.automation.Rule;
+import org.openhab.core.automation.Rule.TemplateState;
 import org.openhab.core.automation.RuleExecution;
 import org.openhab.core.automation.RuleManager;
 import org.openhab.core.automation.RuleRegistry;
@@ -87,6 +93,7 @@ import org.openhab.core.storage.StorageService;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
+import org.osgi.service.component.annotations.Modified;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
@@ -111,8 +118,9 @@ import org.slf4j.LoggerFactory;
  * @author Markus Rathgeb - use a managed rule
  * @author Ana Dimova - new reference syntax: list[index], map["key"], bean.field
  * @author Florian Hotze - add support for script condition/action compilation
+ * @author Robert Delbrück - add support for rule execution duration
  */
-@Component(immediate = true, service = { RuleManager.class })
+@Component(immediate = true, service = { RuleManager.class }, configurationPid = RuleEngineImpl.SERVICE_PID)
 @NonNullByDefault
 public class RuleEngineImpl implements RuleManager, RegistryChangeListener<ModuleType>, ReadyTracker {
 
@@ -126,6 +134,14 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
     private static final int RULE_INIT_DELAY = 500;
 
     private static final ReadyMarker MARKER = new ReadyMarker("ruleengine", "start");
+
+    static final String SERVICE_PID = "org.openhab.ruleengine";
+    private static final String DISABLED_RULES_CLEANUP_DELAY_PROP = "disabledRules.cleanupDelayMinutes";
+
+    // Delay (in minutes) after reaching startlevel rules to run cleanup. 0 = disabled.
+    private volatile long disabledRulesCleanupDelayMinutes = 30L;
+
+    private final AtomicReference<@Nullable DisabledRulesCleaner> disabledRulesCleaner = new AtomicReference<>();
 
     private final Map<String, WrappedRule> managedRules = new ConcurrentHashMap<>();
 
@@ -167,7 +183,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
     /**
      * flag to check whether we have reached a start level where we want to start rule execution
      */
-    private boolean started = false;
+    private volatile boolean started = false;
 
     protected final Logger logger = LoggerFactory.getLogger(RuleEngineImpl.class);
 
@@ -180,7 +196,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
      * The context map of a {@link Rule} is cleaned when the execution is completed. The relation is
      * {@link Rule}'s UID to Rule context map.
      */
-    private final Map<String, Map<String, Object>> contextMap = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, @Nullable Object>> contextMap = new ConcurrentHashMap<>();
 
     /**
      * This field holds reference to {@link ModuleTypeRegistry}. The {@link RuleEngineImpl} needs it to auto-map
@@ -246,8 +262,19 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
         }
 
         @Override
-        public void runNow(String uid, boolean considerConditions, @Nullable Map<String, Object> context) {
+        public void runNow(String uid, boolean considerConditions, @Nullable Map<String, @Nullable Object> context) {
             RuleEngineImpl.this.runNow(uid, considerConditions, context);
+        }
+
+        @Override
+        public Future<Map<String, @Nullable Object>> runAsync(String ruleUID) {
+            return RuleEngineImpl.this.runAsync(ruleUID);
+        }
+
+        @Override
+        public Future<Map<String, @Nullable Object>> runAsync(String ruleUID, boolean considerConditions,
+                @Nullable Map<String, @Nullable Object> context) {
+            return RuleEngineImpl.this.runAsync(ruleUID, considerConditions, context);
         }
     };
 
@@ -255,9 +282,10 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
      * Constructor of {@link RuleEngineImpl}.
      */
     @Activate
-    public RuleEngineImpl(final @Reference ModuleTypeRegistry moduleTypeRegistry,
-            final @Reference RuleRegistry ruleRegistry, final @Reference StorageService storageService,
-            final @Reference ReadyService readyService, final @Reference StartLevelService startLevelService) {
+    public RuleEngineImpl(final Map<String, Object> configuration,
+            final @Reference ModuleTypeRegistry moduleTypeRegistry, final @Reference RuleRegistry ruleRegistry,
+            final @Reference StorageService storageService, final @Reference ReadyService readyService,
+            final @Reference StartLevelService startLevelService) {
         this.disabledRulesStorage = storageService.getStorage(DISABLED_RULE_STORAGE, this.getClass().getClassLoader());
 
         mtRegistry = moduleTypeRegistry;
@@ -291,8 +319,27 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
             addRule(rule);
         }
 
+        updateDisabledRulesCleanupDelay(configuration);
+
         readyService.registerTracker(this, new ReadyMarkerFilter().withType(StartLevelService.STARTLEVEL_MARKER_TYPE)
                 .withIdentifier(Integer.toString(StartLevelService.STARTLEVEL_RULES)));
+    }
+
+    private DisabledRulesCleaner getOrCreateDisabledRulesCleaner() {
+        for (;;) {
+            DisabledRulesCleaner cur = disabledRulesCleaner.get();
+            if (cur != null) {
+                return cur;
+            }
+            DisabledRulesCleaner created = new DisabledRulesCleaner(this.ruleRegistry, this.disabledRulesStorage,
+                    this::getScheduledExecutor);
+            // when the cleaner naturally finishes, clear the reference so it can be GC'ed
+            created.setOnFinished(() -> disabledRulesCleaner.compareAndSet(created, null));
+            if (disabledRulesCleaner.compareAndSet(null, created)) {
+                return created;
+            }
+            // CAS failed; another thread installed a cleaner — retry
+        }
     }
 
     /**
@@ -308,6 +355,11 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
         }
 
         compositeFactory.deactivate();
+
+        DisabledRulesCleaner prev = disabledRulesCleaner.getAndSet(null);
+        if (prev != null) {
+            prev.stop();
+        }
 
         for (Future<?> f : scheduleTasks.values()) {
             f.cancel(true);
@@ -451,6 +503,11 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
         final String rUID = newRule.getUID();
         final WrappedRule rule = new WrappedRule(newRule);
         managedRules.put(rUID, rule);
+        // Inform cleaner that the rule is present again (clears missing timestamp)
+        DisabledRulesCleaner c = disabledRulesCleaner.get();
+        if (c != null) {
+            c.onRuleAdded(rUID);
+        }
         RuleStatusInfo initStatusInfo = disabledRulesStorage.get(rUID) == null
                 ? new RuleStatusInfo(RuleStatus.INITIALIZING)
                 : new RuleStatusInfo(RuleStatus.UNINITIALIZED, RuleStatusDetail.DISABLED);
@@ -676,11 +733,12 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
      */
     private void unregister(WrappedRule r) {
         String rUID = r.getUID();
+        TriggerHandlerCallbackImpl callback;
         synchronized (this) {
-            TriggerHandlerCallbackImpl callback = thCallbacks.remove(rUID);
-            if (callback != null) {
-                callback.dispose();
-            }
+            callback = thCallbacks.remove(rUID);
+        }
+        if (callback != null) {
+            callback.dispose();
         }
         removeModuleHandlers(r.getModules(), rUID);
     }
@@ -838,8 +896,17 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
             return false;
         }
 
-        // Set the module handlers and so check if all handlers are available.
         final String ruleUID = rule.getUID();
+        TemplateState templateState = rule.unwrap().getTemplateState();
+        if (templateState == TemplateState.TEMPLATE_MISSING || templateState == TemplateState.PENDING) {
+            setStatus(ruleUID,
+                    new RuleStatusInfo(RuleStatus.UNINITIALIZED,
+                            templateState == TemplateState.TEMPLATE_MISSING ? RuleStatusDetail.TEMPLATE_MISSING_ERROR
+                                    : RuleStatusDetail.TEMPLATE_PENDING));
+            return false;
+        }
+
+        // Set the module handlers and so check if all handlers are available.
         final String errMsgs = setModuleHandlers(ruleUID, rule.getModules());
         if (errMsgs != null) {
             setStatus(ruleUID,
@@ -848,23 +915,30 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
             return false;
         }
 
-        // Compile the conditions and actions and so check if they are valid.
-        if (!compileRule(rule)) {
-            return false;
+        if (started) {
+            // compile the conditions and actions and so check if they are valid
+            if (!compileRule(rule)) {
+                return false;
+            }
+        } else {
+            // script engines are not available yet, so skip compilation
+            logger.debug("Rule engine not yet started - skipping compilation of rule '{}'", ruleUID);
         }
 
         // Register the rule and set idle status.
         register(rule);
         setStatus(ruleUID, new RuleStatusInfo(RuleStatus.IDLE));
 
-        // check if we have to trigger because of the startlevel
+        // If the rule engine is started: Check if we have to trigger immediately because of the startlevel
+        // Execution of startlevel triggers during startup is handled by executeRulesWithStartlevel()
         List<Trigger> slTriggers = rule.getTriggers().stream().map(WrappedTrigger::unwrap)
                 .filter(t -> SystemTriggerHandler.STARTLEVEL_MODULE_TYPE_ID.equals(t.getTypeUID())).toList();
-        if (slTriggers.stream()
+        int startLevel = startLevelService.getStartLevel();
+        if (started && slTriggers.stream()
                 .anyMatch(t -> ((BigDecimal) t.getConfiguration().get(SystemTriggerHandler.CFG_STARTLEVEL))
-                        .intValue() <= startLevelService.getStartLevel())) {
-            runNow(rule.getUID(), true, Map.of(SystemTriggerHandler.OUT_STARTLEVEL, StartLevelService.STARTLEVEL_RULES,
-                    "event", SystemEventFactory.createStartlevelEvent(StartLevelService.STARTLEVEL_RULES)));
+                        .intValue() <= startLevel)) {
+            runAsync(rule.getUID(), true, Map.of(SystemTriggerHandler.OUT_STARTLEVEL,
+                    StartLevelService.STARTLEVEL_RULES, "event", SystemEventFactory.createStartlevelEvent(startLevel)));
         }
 
         return true;
@@ -878,11 +952,17 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
      * @return true if compilation succeeded, otherwise false
      */
     private boolean compileRule(final WrappedRule rule) {
+        logger.debug("Compiling rule '{}' ...", rule.getUID());
         try {
             compileConditions(rule);
             compileActions(rule);
             return true;
         } catch (Throwable t) {
+            if (logger.isDebugEnabled()) {
+                logger.error("Failed to compile rule: {}", rule.getUID(), t);
+            } else {
+                logger.error("Failed to compile rule {}: {}", rule.getUID(), t.getMessage());
+            }
             setStatus(rule.getUID(), new RuleStatusInfo(RuleStatus.UNINITIALIZED,
                     RuleStatusDetail.HANDLER_INITIALIZING_ERROR, t.getMessage()));
             unregister(rule);
@@ -1029,15 +1109,16 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
      * @param td {@link TriggerData} object containing new values for {@link Trigger}'s {@link Output}s
      */
     protected void runRule(String ruleUID, TriggerHandlerCallbackImpl.TriggerData td) {
-        if (thCallbacks.get(ruleUID) == null) {
-            // the rule was unregistered
-            return;
-        }
-        if (!started) {
-            logger.debug("Rule engine not yet started - not executing rule '{}',", ruleUID);
-            return;
-        }
         synchronized (this) {
+            if (thCallbacks.get(ruleUID) == null) {
+                // the rule was unregistered
+                return;
+            }
+            if (!started) {
+                logger.debug("Rule engine not yet started - not executing rule '{}'", ruleUID);
+                return;
+            }
+
             final RuleStatus ruleStatus = getRuleStatus(ruleUID);
             if (ruleStatus != null && ruleStatus != RuleStatus.IDLE) {
                 logger.error("Failed to execute rule ‘{}' with status '{}'", ruleUID, ruleStatus.name());
@@ -1046,6 +1127,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
             // change state to RUNNING
             setStatus(ruleUID, new RuleStatusInfo(RuleStatus.RUNNING));
         }
+        long startTime = System.nanoTime();
         try {
             clearContext(ruleUID);
 
@@ -1055,66 +1137,110 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
                 boolean isSatisfied = calculateConditions(rule);
                 if (isSatisfied) {
                     executeActions(rule, true);
-                    logger.debug("The rule '{}' is executed.", ruleUID);
+                    logger.debug("The rule '{}' was executed.", ruleUID);
                 } else {
-                    logger.debug("The rule '{}' is NOT executed, since it has unsatisfied conditions.", ruleUID);
+                    logger.debug("The rule '{}' was NOT executed, since it has unsatisfied conditions.", ruleUID);
                 }
             }
         } catch (Throwable t) {
             logger.error("Failed to execute rule '{}': {}", ruleUID, t.getMessage());
             logger.debug("", t);
         }
+        long duration = (System.nanoTime() - startTime) / 1_000_000;
         // change state to IDLE only if the rule has not been DISABLED.
         synchronized (this) {
             if (getRuleStatus(ruleUID) == RuleStatus.RUNNING) {
-                setStatus(ruleUID, new RuleStatusInfo(RuleStatus.IDLE));
+                setStatus(ruleUID, new RuleStatusInfo(RuleStatus.IDLE, RuleStatusDetail.NONE, null, duration));
             }
         }
     }
 
     @Override
-    public Map<String, Object> runNow(String ruleUID, boolean considerConditions,
-            @Nullable Map<String, Object> context) {
-        Map<String, Object> returnContext = new HashMap<>();
+    public Map<String, @Nullable Object> runNow(String ruleUID, boolean considerConditions,
+            @Nullable Map<String, @Nullable Object> context) {
         final WrappedRule rule = getManagedRule(ruleUID);
         if (rule == null) {
             logger.warn("Failed to execute rule '{}': Invalid Rule UID", ruleUID);
-            return returnContext;
+            return Map.of();
         }
+
+        TriggerHandlerCallbackImpl thCallback;
         synchronized (this) {
-            final RuleStatus ruleStatus = getRuleStatus(ruleUID);
-            if (ruleStatus != null && ruleStatus != RuleStatus.IDLE) {
-                logger.error("Failed to execute rule ‘{}' with status '{}'", ruleUID, ruleStatus.name());
-                return returnContext;
+            thCallback = thCallbacks.get(ruleUID);
+        }
+        if (thCallback == null) {
+            RuleStatus ruleStatus;
+            synchronized (this) {
+                ruleStatus = getRuleStatus(ruleUID);
             }
-            // change state to RUNNING
-            setStatus(ruleUID, new RuleStatusInfo(RuleStatus.RUNNING));
+            logger.error("Failed to execute rule '{}' with status '{}': could not acquire rule thread", ruleUID,
+                    ruleStatus == null ? "UNKNOWN" : ruleStatus.name());
+            return Map.of();
+        }
+
+        Future<Map<String, @Nullable Object>> future;
+        try {
+            future = thCallback.getScheduler().submit(new RunRuleCallable(rule, considerConditions, context));
+        } catch (RejectedExecutionException e) {
+            logger.warn("Failed to execute rule '{}' because the rule executor rejected execution: {}", ruleUID,
+                    e.getMessage());
+            return Map.of();
         }
         try {
-            clearContext(ruleUID);
-            if (context != null && !context.isEmpty()) {
-                getContext(ruleUID, null).putAll(context);
-            }
-            if (!considerConditions || calculateConditions(rule)) {
-                executeActions(rule, false);
-            }
-            logger.debug("The rule '{}' is executed.", ruleUID);
-            returnContext.putAll(getContext(ruleUID, null));
-        } catch (Throwable t) {
-            logger.error("Failed to execute rule '{}': ", ruleUID, t);
+            return future.get();
+        } catch (InterruptedException e) {
+            logger.warn("Interrupted while waiting for rule '{}' to execute, attempting to cancel execution", ruleUID);
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            logger.error("Failed to execute rule '{}': ", ruleUID, e.getCause());
         }
-        // change state to IDLE only if the rule has not been DISABLED.
-        synchronized (this) {
-            if (getRuleStatus(ruleUID) == RuleStatus.RUNNING) {
-                setStatus(ruleUID, new RuleStatusInfo(RuleStatus.IDLE));
-            }
-        }
-        return returnContext;
+        return Map.of();
     }
 
     @Override
-    public Map<String, Object> runNow(String ruleUID) {
+    public Map<String, @Nullable Object> runNow(String ruleUID) {
         return runNow(ruleUID, false, null);
+    }
+
+    @Override
+    public Future<Map<String, @Nullable Object>> runAsync(String ruleUID) {
+        return runAsync(ruleUID, false, null);
+    }
+
+    @Override
+    public Future<Map<String, @Nullable Object>> runAsync(String ruleUID, boolean considerConditions,
+            @Nullable Map<String, @Nullable Object> context) {
+        final WrappedRule rule = getManagedRule(ruleUID);
+        if (rule == null) {
+            logger.warn("Failed to execute rule '{}': Invalid rule UID", ruleUID);
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Invalid rule UID: " + ruleUID));
+        }
+
+        TriggerHandlerCallbackImpl thCallback;
+        synchronized (this) {
+            thCallback = thCallbacks.get(ruleUID);
+        }
+        if (thCallback == null) {
+            RuleStatus ruleStatus;
+            synchronized (this) {
+                ruleStatus = getRuleStatus(ruleUID);
+            }
+            logger.error("Failed to execute rule '{}' with status '{}': could not acquire rule thread", ruleUID,
+                    ruleStatus == null ? "UNKNOWN" : ruleStatus.name());
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Could not acquire rule thread for rule '" + ruleUID + "' for rule execution"));
+        }
+
+        Future<Map<String, @Nullable Object>> future;
+        try {
+            future = thCallback.getScheduler().submit(new RunRuleCallable(rule, considerConditions, context));
+        } catch (RejectedExecutionException e) {
+            logger.warn("Failed to execute rule '{}' because the rule executor rejected execution: {}", ruleUID,
+                    e.getMessage());
+            return CompletableFuture.failedFuture(e);
+        }
+        return future;
     }
 
     /**
@@ -1123,7 +1249,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
      * @param ruleUID the UID of the rule whose context must be cleared.
      */
     protected void clearContext(String ruleUID) {
-        Map<String, Object> context = contextMap.get(ruleUID);
+        Map<String, @Nullable Object> context = contextMap.get(ruleUID);
         if (context != null) {
             context.clear();
         }
@@ -1147,7 +1273,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
      * @param outputs new output values.
      */
     private void updateContext(String ruleUID, String moduleUID, @Nullable Map<String, ?> outputs) {
-        Map<String, Object> context = getContext(ruleUID, null);
+        Map<String, @Nullable Object> context = getContext(ruleUID, null);
         if (outputs != null) {
             for (Map.Entry<String, ?> entry : outputs.entrySet()) {
                 String key = moduleUID + OUTPUT_SEPARATOR + entry.getKey();
@@ -1159,8 +1285,8 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
     /**
      * @return copy of current context in rule engine
      */
-    private Map<String, Object> getContext(String ruleUID, @Nullable Set<Connection> connections) {
-        Map<String, Object> context = contextMap.computeIfAbsent(ruleUID, k -> new HashMap<>());
+    private Map<String, @Nullable Object> getContext(String ruleUID, @Nullable Set<Connection> connections) {
+        Map<String, @Nullable Object> context = contextMap.computeIfAbsent(ruleUID, k -> new HashMap<>());
         if (context == null) {
             throw new IllegalStateException("context cannot be null at that point - please report a bug.");
         }
@@ -1205,6 +1331,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
         if (conditions.isEmpty()) {
             return;
         }
+        logger.trace("Compiling conditions of {}", rule.getUID());
         for (WrappedCondition wrappedCondition : conditions) {
             final Condition condition = wrappedCondition.unwrap();
             ConditionHandler cHandler = wrappedCondition.getModuleHandler();
@@ -1212,7 +1339,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
                 try {
                     cHandler.compile();
                 } catch (Throwable t) {
-                    String errMessage = "Failed to pre-compile condition: " + condition.getId() + "(" + t.getMessage()
+                    String errMessage = "Failed to compile condition: " + condition.getId() + "(" + t.getMessage()
                             + ")";
                     throw new RuntimeException(errMessage, t);
                 }
@@ -1240,7 +1367,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
             }
             final Condition condition = wrappedCondition.unwrap();
             ConditionHandler tHandler = wrappedCondition.getModuleHandler();
-            Map<String, Object> context = getContext(ruleUID, wrappedCondition.getConnections());
+            Map<String, @Nullable Object> context = getContext(ruleUID, wrappedCondition.getConnections());
             if (tHandler != null && !tHandler.isSatisfied(Collections.unmodifiableMap(context))) {
                 logger.debug("The condition '{}' of rule '{}' is unsatisfied.", condition.getId(), ruleUID);
                 return false;
@@ -1260,6 +1387,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
         if (actions.isEmpty()) {
             return;
         }
+        logger.trace("Compiling actions of rule {}", rule.getUID());
         for (WrappedAction wrappedAction : actions) {
             final Action action = wrappedAction.unwrap();
             ActionHandler aHandler = wrappedAction.getModuleHandler();
@@ -1267,7 +1395,7 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
                 try {
                     aHandler.compile();
                 } catch (Throwable t) {
-                    String errMessage = "Failed to pre-compile action: " + action.getId() + "(" + t.getMessage() + ")";
+                    String errMessage = "Failed to compile action: " + action.getId() + "(" + t.getMessage() + ")";
                     throw new RuntimeException(errMessage, t);
                 }
             }
@@ -1294,15 +1422,16 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
             final Action action = wrappedAction.unwrap();
             ActionHandler aHandler = wrappedAction.getModuleHandler();
             if (aHandler != null) {
-                Map<String, Object> context = getContext(ruleUID, wrappedAction.getConnections());
+                Map<String, @Nullable Object> context = getContext(ruleUID, wrappedAction.getConnections());
                 try {
-                    Map<String, ?> outputs = aHandler.execute(Collections.unmodifiableMap(context));
+                    Map<String, @Nullable ?> outputs = aHandler.execute(Collections.unmodifiableMap(context));
                     if (outputs != null) {
                         context = getContext(ruleUID, null);
                         updateContext(ruleUID, action.getId(), outputs);
                     }
                 } catch (Throwable t) {
-                    String errMessage = "Failed to execute action: " + action.getId() + "(" + t.getMessage() + ")";
+                    String errMessage = "Failed to execute action '" + action.getId() + "' of rule '" + ruleUID + "': "
+                            + t.getMessage();
                     if (stopOnFirstFail) {
                         logger.debug("Action {}-{} threw an exception: ", ruleUID, action.getId(), t);
                         throw new RuntimeException(errMessage, t);
@@ -1547,6 +1676,9 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
     @Override
     public void onReadyMarkerAdded(ReadyMarker readyMarker) {
         compileRules();
+        if (disabledRulesCleanupDelayMinutes > 0) {
+            getOrCreateDisabledRulesCleaner().start(disabledRulesCleanupDelayMinutes);
+        }
     }
 
     @Override
@@ -1561,8 +1693,9 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
      * handlers weren't available when the rule was added to the rule engine.
      */
     private void compileRules() {
+        logger.debug("Compiling all enabled rules");
         getScheduledExecutor().submit(() -> {
-            ruleRegistry.getAll().stream() //
+            ruleRegistry.stream() //
                     .filter(r -> isEnabled(r.getUID())) //
                     .forEach(r -> compileRule(r.getUID()));
             executeRulesWithStartLevel();
@@ -1571,15 +1704,69 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
 
     private void executeRulesWithStartLevel() {
         getScheduledExecutor().submit(() -> {
-            ruleRegistry.getAll().stream() //
+            List<Future<Map<String, @Nullable Object>>> futures = ruleRegistry.stream() //
                     .filter(this::mustTrigger) //
-                    .forEach(r -> runNow(r.getUID(), true,
+                    .map(r -> runAsync(r.getUID(), true,
                             Map.of(SystemTriggerHandler.OUT_STARTLEVEL, StartLevelService.STARTLEVEL_RULES, "event",
-                                    SystemEventFactory.createStartlevelEvent(StartLevelService.STARTLEVEL_RULES))));
+                                    SystemEventFactory.createStartlevelEvent(StartLevelService.STARTLEVEL_RULES))))
+                    .toList();
+
+            // Wait for the rule executions to complete before announcing to be "started"
+            for (Future<Map<String, @Nullable Object>> future : futures) {
+                try {
+                    future.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    logger.warn("Interrupted while executing rules with startlevels");
+                    return;
+                } catch (ExecutionException e) {
+                    logger.warn("Failed to execute rule at startlevel: {}", e.getMessage());
+                    logger.trace("", e);
+                }
+            }
             started = true;
             readyService.markReady(MARKER);
             logger.info("Rule engine started.");
         });
+    }
+
+    @Modified
+    protected void modified(Map<String, Object> configuration) {
+        long old = disabledRulesCleanupDelayMinutes;
+        updateDisabledRulesCleanupDelay(configuration);
+        if (old != disabledRulesCleanupDelayMinutes) {
+            DisabledRulesCleaner prev = disabledRulesCleaner.getAndSet(null);
+            if (prev != null) {
+                prev.stop();
+            }
+            if (disabledRulesCleanupDelayMinutes > 0
+                    && startLevelService.getStartLevel() >= StartLevelService.STARTLEVEL_RULES) {
+                getOrCreateDisabledRulesCleaner().start(disabledRulesCleanupDelayMinutes);
+            }
+        }
+    }
+
+    private void updateDisabledRulesCleanupDelay(Map<String, Object> configuration) {
+        if (configuration == null) {
+            disabledRulesCleanupDelayMinutes = 30L;
+            return;
+        }
+        Object v = configuration.get(DISABLED_RULES_CLEANUP_DELAY_PROP);
+        if (v == null) {
+            disabledRulesCleanupDelayMinutes = 30L;
+            return;
+        }
+        try {
+            if (v instanceof Number) {
+                disabledRulesCleanupDelayMinutes = ((Number) v).longValue();
+            } else {
+                disabledRulesCleanupDelayMinutes = Long.parseLong(v.toString());
+            }
+        } catch (Exception e) {
+            logger.warn("Invalid configuration for {}: {} - using default 30 minutes",
+                    DISABLED_RULES_CLEANUP_DELAY_PROP, v);
+            disabledRulesCleanupDelayMinutes = 30L;
+        }
     }
 
     private boolean mustTrigger(Rule r) {
@@ -1606,5 +1793,58 @@ public class RuleEngineImpl implements RuleManager, RegistryChangeListener<Modul
     @Override
     public Stream<RuleExecution> simulateRuleExecutions(ZonedDateTime from, ZonedDateTime until) {
         return new RuleExecutionSimulator(this.ruleRegistry, this).simulateRuleExecutions(from, until);
+    }
+
+    private class RunRuleCallable implements Callable<Map<String, @Nullable Object>> {
+
+        private final WrappedRule rule;
+        private final boolean considerConditions;
+        private final @Nullable Map<String, @Nullable Object> context;
+
+        public RunRuleCallable(WrappedRule rule, boolean considerConditions,
+                @Nullable Map<String, @Nullable Object> context) {
+            this.rule = rule;
+            this.considerConditions = considerConditions;
+            this.context = context;
+        }
+
+        @Override
+        public Map<String, @Nullable Object> call() throws Exception {
+            String ruleUID = rule.getUID();
+            Map<String, @Nullable Object> returnContext = new HashMap<>();
+            synchronized (RuleEngineImpl.this) {
+                final RuleStatus ruleStatus = getRuleStatus(ruleUID);
+                if (ruleStatus != null && ruleStatus != RuleStatus.IDLE) {
+                    logger.error("Failed to execute rule '{}' with status '{}'", ruleUID, ruleStatus.name());
+                    return Map.of();
+                }
+                // change state to RUNNING
+                setStatus(ruleUID, new RuleStatusInfo(RuleStatus.RUNNING));
+            }
+            long startTime = System.nanoTime();
+            try {
+                clearContext(ruleUID);
+                Map<String, @Nullable Object> context = this.context;
+                if (context != null && !context.isEmpty()) {
+                    getContext(ruleUID, null).putAll(context);
+                }
+                if (!considerConditions || calculateConditions(rule)) {
+                    executeActions(rule, false);
+                }
+                logger.debug("The rule '{}' was executed.", ruleUID);
+                returnContext.putAll(getContext(ruleUID, null));
+            } catch (Throwable t) {
+                logger.error("Failed to execute rule '{}': ", ruleUID, t);
+            } finally {
+                // change state to IDLE only if the rule has not been DISABLED.
+                long duration = (System.nanoTime() - startTime) / 1_000_000;
+                synchronized (RuleEngineImpl.this) {
+                    if (getRuleStatus(ruleUID) == RuleStatus.RUNNING) {
+                        setStatus(ruleUID, new RuleStatusInfo(RuleStatus.IDLE, RuleStatusDetail.NONE, null, duration));
+                    }
+                }
+            }
+            return returnContext;
+        }
     }
 }

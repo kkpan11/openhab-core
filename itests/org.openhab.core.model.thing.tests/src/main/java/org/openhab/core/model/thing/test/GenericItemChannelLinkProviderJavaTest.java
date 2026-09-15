@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,7 +15,6 @@ package org.openhab.core.model.thing.test;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.io.ByteArrayInputStream;
@@ -96,8 +95,6 @@ public class GenericItemChannelLinkProviderJavaTest extends JavaOSGiTest {
 
     @Test
     public void testIntegrationWithGenericItemProvider() throws Exception {
-        Thread.sleep(2500); // Wait for the ChannelItemProvider to join the game
-
         Collection<Thing> things = thingRegistry.getAll();
         assertThat(things.size(), is(0));
 
@@ -133,7 +130,7 @@ public class GenericItemChannelLinkProviderJavaTest extends JavaOSGiTest {
 
         // Now add the model again
         modelRepository.addOrRefreshModel(ITEMS_TESTMODEL_NAME, new ByteArrayInputStream(itemsModel.getBytes()));
-        assertThat(itemRegistry.getItems().size(), is(2)); // -> ensure ChannelItemProvider cleans up properly
+        assertThat(itemRegistry.getItems().size(), is(2)); // -> ensure proper clean-up
         assertThat(itemChannelLinkRegistry.getAll().size(), is(1));
     }
 

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -77,6 +77,8 @@ public class CorsFilter implements ContainerResponseFilter {
             HTTP_DELETE_METHOD, HTTP_HEAD_METHOD, HTTP_OPTIONS_METHOD);
 
     static final String ACCEPTED_HTTP_METHODS = String.join(HEADERS_SEPARATOR, ACCEPTED_HTTP_METHODS_LIST);
+
+    static boolean hasLogged;
 
     private final transient Logger logger = LoggerFactory.getLogger(CorsFilter.class);
 
@@ -157,7 +159,7 @@ public class CorsFilter implements ContainerResponseFilter {
         if (values == null || values.isEmpty()) {
             return null;
         }
-        return values.get(0);
+        return values.getFirst();
     }
 
     /**
@@ -183,8 +185,9 @@ public class CorsFilter implements ContainerResponseFilter {
             this.isEnabled = "true".equalsIgnoreCase(corsPropertyValue);
         }
 
-        if (this.isEnabled) {
-            logger.info("enabled CORS for REST API.");
+        if (this.isEnabled && !hasLogged) {
+            logger.info("Enabled CORS for REST API.");
+            hasLogged = true;
         }
     }
 }

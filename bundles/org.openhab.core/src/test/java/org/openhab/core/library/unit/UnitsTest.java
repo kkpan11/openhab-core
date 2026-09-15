@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,14 +12,16 @@
  */
 package org.openhab.core.library.unit;
 
-import static org.hamcrest.CoreMatchers.*;
+import static org.hamcrest.CoreMatchers.anyOf;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.*;
 import static org.hamcrest.number.IsCloseTo.closeTo;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.math.BigDecimal;
 
 import javax.measure.Quantity;
+import javax.measure.quantity.Area;
 import javax.measure.quantity.Dimensionless;
 import javax.measure.quantity.Energy;
 import javax.measure.quantity.Length;
@@ -28,6 +30,7 @@ import javax.measure.quantity.Power;
 import javax.measure.quantity.Pressure;
 import javax.measure.quantity.Speed;
 import javax.measure.quantity.Temperature;
+import javax.measure.quantity.Volume;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -35,9 +38,11 @@ import org.hamcrest.Matcher;
 import org.hamcrest.core.IsEqual;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.library.dimension.ArealDensity;
+import org.openhab.core.library.dimension.CalorificValue;
 import org.openhab.core.library.dimension.Density;
 import org.openhab.core.library.dimension.Intensity;
 import org.openhab.core.library.types.QuantityType;
+import org.openhab.core.types.util.UnitUtils;
 
 import tech.units.indriya.quantity.Quantities;
 
@@ -109,6 +114,17 @@ public class UnitsTest {
     public void testMmHgUnitSymbol() {
         assertThat(Units.MILLIMETRE_OF_MERCURY.getSymbol(), is("mmHg"));
         assertThat(Units.MILLIMETRE_OF_MERCURY.toString(), is("mmHg"));
+    }
+
+    @Test
+    public void testKiloWattHourPerCubicMetreUnitSymbolAndConversion() {
+        assertThat(Units.KILOWATT_HOUR_PER_CUBICMETRE.toString(), is("kWh/m³"));
+
+        Quantity<CalorificValue> calorificValue = Quantities.getQuantity(new BigDecimal("10.183"),
+                Units.KILOWATT_HOUR_PER_CUBICMETRE);
+        Quantity<Volume> volume = Quantities.getQuantity(new BigDecimal("100"), SIUnits.CUBIC_METRE);
+        Quantity<?> energy = volume.multiply(calorificValue);
+        assertThat(energy.getUnit(), is(Units.KILOWATT_HOUR));
     }
 
     @Test
@@ -284,6 +300,70 @@ public class UnitsTest {
     }
 
     @Test
+    public void testLitre2CubicMetre() {
+        Quantity<Volume> l = Quantities.getQuantity(BigDecimal.ONE, Units.LITRE);
+
+        Quantity<Volume> m3 = l.to(SIUnits.CUBIC_METRE);
+        assertThat(m3.getUnit(), is(SIUnits.CUBIC_METRE));
+        assertThat(m3.getValue().doubleValue(), closeTo(0.001, DEFAULT_ERROR));
+
+        QuantityType<Volume> litre = new QuantityType<>("5 l");
+
+        QuantityType<?> cubicMetre = litre.toUnit(SIUnits.CUBIC_METRE);
+        assertThat(cubicMetre, is(notNullValue()));
+        assertThat(cubicMetre.getUnit(), is(SIUnits.CUBIC_METRE));
+        assertThat(cubicMetre.doubleValue(), closeTo(0.005, DEFAULT_ERROR));
+    }
+
+    @Test
+    public void testCubicMetre2Litre() {
+        Quantity<Volume> m3 = Quantities.getQuantity(BigDecimal.ONE, SIUnits.CUBIC_METRE);
+
+        Quantity<Volume> l = m3.to(Units.LITRE);
+        assertThat(l.getUnit(), is(Units.LITRE));
+        assertThat(l.getValue().doubleValue(), closeTo(1000, DEFAULT_ERROR));
+
+        QuantityType<Volume> cubicMetre = new QuantityType<>("5 m³");
+
+        QuantityType<?> litre = cubicMetre.toUnit(Units.LITRE);
+        assertThat(litre, is(notNullValue()));
+        assertThat(litre.getUnit(), is(Units.LITRE));
+        assertThat(litre.doubleValue(), closeTo(5000, DEFAULT_ERROR));
+    }
+
+    @Test
+    public void testLitre2Gallon() {
+        Quantity<Volume> l = Quantities.getQuantity(BigDecimal.ONE, Units.LITRE);
+
+        Quantity<Volume> gal = l.to(ImperialUnits.GALLON_LIQUID_US);
+        assertThat(gal.getUnit(), is(ImperialUnits.GALLON_LIQUID_US));
+        assertThat(gal.getValue().doubleValue(), closeTo(0.2641, 1e-4));
+
+        QuantityType<Volume> litre = new QuantityType<>("5 l");
+
+        QuantityType<?> gallon = litre.toUnit(ImperialUnits.GALLON_LIQUID_US);
+        assertThat(gallon, is(notNullValue()));
+        assertThat(gallon.getUnit(), is(ImperialUnits.GALLON_LIQUID_US));
+        assertThat(gallon.doubleValue(), closeTo(1.3208, 1e-4));
+    }
+
+    @Test
+    public void testGallon2Litre() {
+        Quantity<Volume> gal = Quantities.getQuantity(BigDecimal.ONE, ImperialUnits.GALLON_LIQUID_US);
+
+        Quantity<Volume> l = gal.to(Units.LITRE);
+        assertThat(l.getUnit(), is(Units.LITRE));
+        assertThat(l.getValue().doubleValue(), closeTo(3.7854, 1e-4));
+
+        QuantityType<Volume> gallon = new QuantityType<>("5 gal");
+
+        QuantityType<?> litre = gallon.toUnit(Units.LITRE);
+        assertThat(litre, is(notNullValue()));
+        assertThat(litre.getUnit(), is(Units.LITRE));
+        assertThat(litre.doubleValue(), closeTo(18.9270, 1e-4));
+    }
+
+    @Test
     public void testFahrenheitUnitSymbol() {
         assertThat(ImperialUnits.FAHRENHEIT.getSymbol(), is("°F"));
         assertThat(ImperialUnits.FAHRENHEIT.toString(), is("°F"));
@@ -315,6 +395,28 @@ public class UnitsTest {
     public void testPpm() {
         QuantityType<Dimensionless> ppm = new QuantityType<>("500 ppm");
         assertEquals("0.05 %", ppm.toUnit(Units.PERCENT).toString());
+    }
+
+    @Test
+    public void testSquareCmConversion() {
+        QuantityType<Area> m2 = new QuantityType<>("1 m²");
+        QuantityType<Area> mm2 = new QuantityType<>("100 mm²");
+        QuantityType<Area> km2 = new QuantityType<>("1 km²");
+
+        assertEquals(10000.0, m2.toUnit("cm²").doubleValue(), DEFAULT_ERROR);
+        assertEquals(1.0, mm2.toUnit("cm²").doubleValue(), DEFAULT_ERROR);
+        assertEquals(1000000.0, km2.toUnit("m²").doubleValue(), DEFAULT_ERROR);
+    }
+
+    @Test
+    public void testCubicCmConversion() {
+        QuantityType<Volume> l = new QuantityType<>("1 l");
+        QuantityType<Volume> cm3 = new QuantityType<>("1000 cm³");
+        QuantityType<Volume> mm3 = new QuantityType<>("1000 mm³");
+
+        assertEquals(1.0, l.toUnit("dm³").doubleValue(), DEFAULT_ERROR);
+        assertEquals(1.0, cm3.toUnit("l").doubleValue(), DEFAULT_ERROR);
+        assertEquals(1.0, mm3.toUnit("cm³").doubleValue(), DEFAULT_ERROR);
     }
 
     @Test
@@ -424,11 +526,60 @@ public class UnitsTest {
     @Test
     public void testYearMonthDay() {
         QuantityType<?> year = QuantityType.valueOf("1 y");
-        assertThat(year.toString(), is("1 year"));
+        assertThat(year.toString(), is("1 yr"));
         QuantityType<?> converted = year.toUnit("d");
         assertThat(converted.doubleValue(), is(closeTo(365.2425, DEFAULT_ERROR)));
         QuantityType<?> converted2 = year.toUnit("mo");
         assertThat(converted2.doubleValue(), is(closeTo(12.0, DEFAULT_ERROR)));
+    }
+
+    @Test
+    public void testColorTemperatureAliases() {
+        QuantityType<?> value;
+        value = QuantityType.valueOf("20 mired");
+        assertEquals(Units.MIRED, value.getUnit());
+        value = QuantityType.valueOf("20 mirek");
+        assertEquals(Units.MIRED, value.getUnit());
+        value = QuantityType.valueOf("20 MK⁻¹");
+        assertEquals(Units.MIRED, value.getUnit());
+    }
+
+    public void testGrains() {
+        assertThat(ImperialUnits.GRAIN.getSymbol(), is("gr"));
+        QuantityType<?> oneHundredGrains = QuantityType.valueOf("100 gr");
+        QuantityType<?> converted = oneHundredGrains.toUnit("g");
+        assertThat(converted.doubleValue(), is(closeTo(6.479891, DEFAULT_ERROR)));
+        assertThat(ImperialUnits.GRAIN_PER_CUBICFOOT.toString(), is("gr/ft³"));
+        QuantityType<?> grainDensity = QuantityType.valueOf("20 gr/ft³");
+        QuantityType<?> convertedDensity = grainDensity.toUnit(Units.MICROGRAM_PER_CUBICMETRE);
+        assertThat(convertedDensity.doubleValue(), is(closeTo(45767038.211314686, DEFAULT_ERROR)));
+    }
+
+    @Test
+    public void testArealDensity() {
+        QuantityType<?> newspaper = QuantityType.valueOf("72 g/m²");
+        QuantityType<?> converted = newspaper.toUnit(Units.KILOGRAM_PER_SQUARE_METRE);
+        assertEquals(converted.doubleValue(), 0.072);
+    }
+
+    @Test
+    public void testAmountOfSubstance() {
+        QuantityType<?> mmolpl = QuantityType.valueOf("0.17833 mmol/l");
+        String mmolplDimension = UnitUtils.getDimensionName(mmolpl.getUnit());
+        QuantityType<?> dh = QuantityType.valueOf("1 °dH");
+        String hDimension = UnitUtils.getDimensionName(dh.getUnit());
+        assertTrue(hDimension.equals(mmolplDimension));
+        assertTrue("Dimensionless".equalsIgnoreCase(hDimension));
+        QuantityType<?> converted = dh.toUnit("mmol/l");
+        assertThat(converted.doubleValue(), is(closeTo(mmolpl.doubleValue(), DEFAULT_ERROR)));
+    }
+
+    @Test
+    public void testSolarIrradiation() {
+        QuantityType<?> whpsm2 = QuantityType.valueOf(10, Units.WATT_HOUR_PER_SQUARE_METRE);
+        assertThat(whpsm2.getUnit().toString(), is("Wh/m²"));
+        QuantityType<?> jpsm2 = QuantityType.valueOf(10, Units.JOULE_PER_SQUARE_METRE);
+        assertThat(jpsm2.getUnit().toString(), is("J/m²"));
     }
 
     private static class QuantityEquals extends IsEqual<Quantity<?>> {

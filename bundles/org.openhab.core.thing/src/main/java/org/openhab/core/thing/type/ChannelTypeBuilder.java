@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,6 +17,7 @@ import java.util.Collection;
 
 import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.openhab.core.semantics.SemanticTag;
 import org.openhab.core.thing.internal.type.StateChannelTypeBuilderImpl;
 import org.openhab.core.thing.internal.type.TriggerChannelTypeBuilderImpl;
 
@@ -60,12 +61,20 @@ public interface ChannelTypeBuilder<@NonNull T extends ChannelTypeBuilder<T>> {
     T withTag(String tag);
 
     /**
-     * Sets the StateDescription for the ChannelType
+     * Sets the Tags for the ChannelType
      *
      * @param tags Collection of tags to be added to the ChannelType
      * @return this Builder
      */
     T withTags(Collection<String> tags);
+
+    /**
+     * Sets the Tags for the ChannelType
+     *
+     * @param tags Collection of tags to be added to the ChannelType
+     * @return this Builder
+     */
+    T withTags(SemanticTag... tags);
 
     /**
      * Sets the ConfigDescriptionURI for the ChannelType

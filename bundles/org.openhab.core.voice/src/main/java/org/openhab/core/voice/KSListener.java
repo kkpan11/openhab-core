@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,7 +25,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
  * @author Kelly Davis - Initial contribution
  */
 @NonNullByDefault
-public interface KSListener {
+public interface KSListener extends DTListener {
     /**
      * Invoked when a {@link KSEvent} event occurs during keyword spotting.
      *

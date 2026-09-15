@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -26,12 +26,12 @@ import org.openhab.core.config.core.xml.util.ConverterAttributeMapValidator;
 import org.openhab.core.config.core.xml.util.GenericUnmarshaller;
 import org.openhab.core.config.core.xml.util.NodeIterator;
 
-import com.thoughtworks.xstream.converters.Converter;
 import com.thoughtworks.xstream.converters.UnmarshallingContext;
 import com.thoughtworks.xstream.io.HierarchicalStreamReader;
 
 /**
- * The {@link AddonInfoConverter} is a concrete implementation of the {@code XStream} {@link Converter} interface used
+ * The {@link AddonInfoConverter} is a concrete implementation of the {@code XStream}
+ * {@link com.thoughtworks.xstream.converters.Converter} interface used
  * to convert add-on information within an XML document into a {@link AddonInfoXmlResult} object.
  * This converter converts {@code addon} XML tags.
  *
@@ -87,6 +87,8 @@ public class AddonInfoConverter extends GenericUnmarshaller<AddonInfoXmlResult> 
                 "Add-on description is null or empty");
 
         AddonInfo.Builder addonInfo = AddonInfo.builder(id, type).withName(name).withDescription(description);
+
+        addonInfo.withKeywords((String) nodeIterator.nextValue("keywords", false));
         addonInfo.withConnection((String) nodeIterator.nextValue("connection", false));
         addonInfo.withCountries((String) nodeIterator.nextValue("countries", false));
         addonInfo.withServiceId((String) nodeIterator.nextValue("service-id", false));

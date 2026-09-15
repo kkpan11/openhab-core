@@ -7,10 +7,13 @@
 	<thing-type id="lamp">
 		<supported-bridge-type-refs>
 			<bridge-type-ref id="bridge"/>
+			<bridge-type-ref bindingId="mqtt" id="broker"/>
 		</supported-bridge-type-refs>
 
 		<label>HUE Lamp</label>
 		<description>My own great HUE Lamp.</description>
+
+		<semantic-equipment-tag>LightBulb</semantic-equipment-tag>
 
 		<channel-groups>
 			<channel-group id="alarm_system" typeId="alarm_system"/>

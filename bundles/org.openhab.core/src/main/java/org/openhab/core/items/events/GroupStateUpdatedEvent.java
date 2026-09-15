@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -11,6 +11,8 @@
  * SPDX-License-Identifier: EPL-2.0
  */
 package org.openhab.core.items.events;
+
+import java.time.ZonedDateTime;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -27,20 +29,20 @@ import org.openhab.core.types.State;
 public class GroupStateUpdatedEvent extends ItemStateUpdatedEvent {
 
     /**
-     * The group item state changed event type.
+     * The group item state updated event type.
      */
     public static final String TYPE = GroupStateUpdatedEvent.class.getSimpleName();
 
     private final String memberName;
 
     protected GroupStateUpdatedEvent(String topic, String payload, String itemName, String memberName,
-            State newItemState, @Nullable String source) {
-        super(topic, payload, itemName, newItemState, source);
+            State newItemState, @Nullable ZonedDateTime lastStateUpdate, @Nullable String source) {
+        super(topic, payload, itemName, newItemState, lastStateUpdate, source);
         this.memberName = memberName;
     }
 
     /**
-     * @return the name of the changed group member
+     * @return the name of the updated group member
      */
     public String getMemberName() {
         return this.memberName;

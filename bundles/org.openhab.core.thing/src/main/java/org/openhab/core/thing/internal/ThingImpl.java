@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -20,6 +20,7 @@ import java.util.Map;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.config.core.Configuration;
+import org.openhab.core.semantics.SemanticTag;
 import org.openhab.core.thing.Channel;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -44,6 +45,7 @@ import org.openhab.core.thing.binding.builder.ThingStatusInfoBuilder;
  * @author Thomas Höfer - Added thing and thing type properties
  * @author Simon Kaufmann - Added label
  * @author Christoph Weitkamp - Added method {@code getChannel(ChannelUID)}
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public class ThingImpl implements Thing {
@@ -63,6 +65,8 @@ public class ThingImpl implements Thing {
     private @NonNullByDefault({}) ThingTypeUID thingTypeUID;
 
     private @Nullable String location;
+
+    private @Nullable String semanticEquipmentTag;
 
     private transient volatile ThingStatusInfo status = ThingStatusInfoBuilder
             .create(ThingStatus.UNINITIALIZED, ThingStatusDetail.NONE).build();
@@ -210,10 +214,8 @@ public class ThingImpl implements Thing {
             throw new IllegalArgumentException("Property name must not be null or empty");
         }
         synchronized (this) {
-            if (value == null) {
-                return properties.remove(name);
-            }
-            return properties.put(name, value);
+            String val = value;
+            return val == null ? properties.remove(name) : properties.put(name, val);
         }
     }
 
@@ -238,6 +240,33 @@ public class ThingImpl implements Thing {
     }
 
     @Override
+    public String toString() {
+        // Configuration is deliberately excluded because it might include sensitive data like passwords.
+        StringBuilder sb = new StringBuilder(getUID().toString());
+        sb.append(" (ThingTypeUID=");
+        sb.append(getThingTypeUID());
+        sb.append(", Bridge=False");
+        if (getBridgeUID() != null) {
+            sb.append(", BridgeUID=");
+            sb.append(getBridgeUID());
+        }
+        sb.append(", Label=");
+        sb.append(getLabel());
+        if (getLocation() != null) {
+            sb.append(", Location=");
+            sb.append(getLocation());
+        }
+        sb.append(", Status=");
+        sb.append(getStatus());
+        sb.append(", StatusInfo=");
+        sb.append(getStatusInfo());
+        sb.append(", SemanticEquipmentTag=");
+        sb.append(getSemanticEquipmentTag());
+        sb.append(")");
+        return sb.toString();
+    }
+
+    @Override
     public int hashCode() {
         final int prime = 31;
         int result = 1;
@@ -258,5 +287,20 @@ public class ThingImpl implements Thing {
         }
         ThingImpl other = (ThingImpl) obj;
         return uid.equals(other.uid);
+    }
+
+    @Override
+    public @Nullable String getSemanticEquipmentTag() {
+        return semanticEquipmentTag;
+    }
+
+    @Override
+    public void setSemanticEquipmentTag(@Nullable String semanticEquipmentTag) {
+        this.semanticEquipmentTag = semanticEquipmentTag;
+    }
+
+    @Override
+    public void setSemanticEquipmentTag(@Nullable SemanticTag semanticEquipmentTag) {
+        setSemanticEquipmentTag(semanticEquipmentTag.getName());
     }
 }

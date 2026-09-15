@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -119,9 +119,9 @@ public interface WatchService {
          * Notify Listener about watch event
          *
          * @param kind the {@link Kind} of this event
-         * @param path the relative path of the file associated with this event
+         * @param fullPath the absolute path of the file associated with this event
          */
-        void processWatchEvent(Kind kind, Path path);
+        void processWatchEvent(Kind kind, Path fullPath);
     }
 
     enum Kind {

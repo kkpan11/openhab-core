@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,8 @@ package org.openhab.core.automation.internal.module.handler;
 
 import static java.util.Map.entry;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -44,10 +45,10 @@ import org.osgi.framework.BundleContext;
 @NonNullByDefault
 @ExtendWith(MockitoExtension.class)
 public class DateTimeTriggerHandlerTest {
-    private @NonNullByDefault({}) @Mock Trigger mockTrigger;
-    private @NonNullByDefault({}) @Mock ItemRegistry mockItemRegistry;
-    private @NonNullByDefault({}) @Mock BundleContext mockBundleContext;
-    private @NonNullByDefault({}) @Mock CronScheduler mockScheduler;
+    private @Mock @NonNullByDefault({}) Trigger mockTrigger;
+    private @Mock @NonNullByDefault({}) ItemRegistry mockItemRegistry;
+    private @Mock @NonNullByDefault({}) BundleContext mockBundleContext;
+    private @Mock @NonNullByDefault({}) CronScheduler mockScheduler;
 
     private static final String ITEM_NAME = "myItem";
     private final DateTimeItem item = new DateTimeItem(ITEM_NAME);

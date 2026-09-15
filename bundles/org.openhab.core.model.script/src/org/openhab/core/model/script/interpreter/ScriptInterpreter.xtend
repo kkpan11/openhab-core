@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -46,16 +46,13 @@ import org.eclipse.xtext.xbase.typesystem.IBatchTypeResolver
  * 
  */
 @SuppressWarnings("restriction")
-public class ScriptInterpreter extends XbaseInterpreter {
+class ScriptInterpreter extends XbaseInterpreter {
 
     @Inject
     ItemRegistry itemRegistry
 
     @Inject
-    StateAndCommandProvider stateAndCommandProvider
-    
-    @Inject
-    private IBatchTypeResolver typeResolver;
+    IBatchTypeResolver typeResolver;
 
     @Inject
     extension IJvmModelAssociations
@@ -100,7 +97,7 @@ public class ScriptInterpreter extends XbaseInterpreter {
     }
 
     def protected Type getStateOrCommand(String name) {
-        for (Type type : stateAndCommandProvider.getAllTypes()) {
+        for (Type type : StateAndCommandProvider::allTypes) {
             if (type.toString == name) {
                 return type
             }
@@ -130,7 +127,7 @@ public class ScriptInterpreter extends XbaseInterpreter {
 
         // Check if the JvmField is inferred
         val sourceElement = jvmField.sourceElements.head
-        if (sourceElement != null) {
+        if (sourceElement !== null) {
             context.assignValue(QualifiedName.create(jvmField.simpleName), value)
             value
         } else {
@@ -139,13 +136,10 @@ public class ScriptInterpreter extends XbaseInterpreter {
     }
 
     override protected doEvaluate(XExpression expression, IEvaluationContext context, CancelIndicator indicator) {
-        if (expression === null) {
-            return null
-        } else if (expression instanceof QuantityLiteral) {
-            return doEvaluate(expression as QuantityLiteral, context, indicator)
-        } else {
-            return super.doEvaluate(expression, context, indicator)
+        if (expression instanceof QuantityLiteral) {
+            return doEvaluate(expression, context, indicator)
         }
+        return super.doEvaluate(expression, context, indicator)
     }
 
     def  protected  Object doEvaluate(QuantityLiteral literal, IEvaluationContext context, CancelIndicator indicator) {

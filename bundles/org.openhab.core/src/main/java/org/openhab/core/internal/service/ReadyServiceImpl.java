@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,11 +14,13 @@ package org.openhab.core.internal.service;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.service.ReadyMarker;
 import org.openhab.core.service.ReadyMarkerFilter;
 import org.openhab.core.service.ReadyService;
@@ -32,6 +34,7 @@ import org.slf4j.LoggerFactory;
  * @author Simon Kaufmann - Initial contribution
  */
 @Component
+@NonNullByDefault
 public class ReadyServiceImpl implements ReadyService {
 
     private final Logger logger = LoggerFactory.getLogger(ReadyServiceImpl.class);
@@ -114,7 +117,7 @@ public class ReadyServiceImpl implements ReadyService {
     }
 
     private void notifyTracker(ReadyTracker readyTracker, Consumer<ReadyMarker> action) {
-        ReadyMarkerFilter f = trackers.get(readyTracker);
+        ReadyMarkerFilter f = Objects.requireNonNull(trackers.get(readyTracker));
         markers.stream().filter(f::apply).forEach(action);
     }
 }

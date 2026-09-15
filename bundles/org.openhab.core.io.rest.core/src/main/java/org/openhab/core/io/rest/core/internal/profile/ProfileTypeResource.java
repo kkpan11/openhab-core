@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -128,13 +128,10 @@ public class ProfileTypeResource implements RESTResource {
             // requested to filter against an unknown channel type -> do not return a ProfileType
             return t -> false;
         }
-        switch (channelType.getKind()) {
-            case STATE:
-                return t -> stateProfileMatchesProfileType(t, channelType);
-            case TRIGGER:
-                return t -> triggerProfileMatchesProfileType(t, channelType);
-        }
-        return t -> false;
+        return switch (channelType.getKind()) {
+            case STATE -> t -> stateProfileMatchesProfileType(t, channelType);
+            case TRIGGER -> t -> triggerProfileMatchesProfileType(t, channelType);
+        };
     }
 
     private Predicate<ProfileType> matchesItemType(@Nullable String itemType) {

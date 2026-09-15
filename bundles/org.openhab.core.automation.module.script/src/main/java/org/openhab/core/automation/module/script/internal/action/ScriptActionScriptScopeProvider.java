@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,6 +19,7 @@ import java.util.Set;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.automation.module.script.ScriptExtensionProvider;
+import org.openhab.core.automation.module.script.action.BusEvent;
 import org.openhab.core.automation.module.script.action.ScriptExecution;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -38,8 +39,9 @@ public class ScriptActionScriptScopeProvider implements ScriptExtensionProvider 
     private final Map<String, Object> elements;
 
     @Activate
-    public ScriptActionScriptScopeProvider(final @Reference ScriptExecution scriptExecution) {
-        elements = Map.of("scriptExecution", scriptExecution);
+    public ScriptActionScriptScopeProvider(final @Reference BusEvent busEvent,
+            final @Reference ScriptExecution scriptExecution) {
+        elements = Map.of("busEvent", busEvent, "scriptExecution", scriptExecution);
     }
 
     @Override
@@ -72,6 +74,6 @@ public class ScriptActionScriptScopeProvider implements ScriptExtensionProvider 
 
     @Override
     public void unload(String scriptIdentifier) {
-        // nothing todo
+        // nothing to do
     }
 }

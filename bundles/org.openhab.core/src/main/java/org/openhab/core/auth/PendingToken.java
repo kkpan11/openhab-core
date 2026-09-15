@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -54,7 +54,6 @@ public class PendingToken {
      */
     public PendingToken(String authorizationCode, String clientId, String redirectUri, String scope,
             @Nullable String codeChallenge, @Nullable String codeChallengeMethod) {
-        super();
         this.authorizationCode = authorizationCode;
         this.clientId = clientId;
         this.redirectUri = redirectUri;

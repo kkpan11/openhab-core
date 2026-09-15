@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -27,7 +27,9 @@ import org.openhab.core.persistence.PersistenceItemConfiguration;
 import org.openhab.core.persistence.config.PersistenceAllConfig;
 import org.openhab.core.persistence.config.PersistenceConfig;
 import org.openhab.core.persistence.config.PersistenceGroupConfig;
+import org.openhab.core.persistence.config.PersistenceGroupExcludeConfig;
 import org.openhab.core.persistence.config.PersistenceItemConfig;
+import org.openhab.core.persistence.config.PersistenceItemExcludeConfig;
 import org.openhab.core.persistence.dto.PersistenceCronStrategyDTO;
 import org.openhab.core.persistence.dto.PersistenceFilterDTO;
 import org.openhab.core.persistence.dto.PersistenceItemConfigurationDTO;
@@ -44,6 +46,8 @@ import org.openhab.core.persistence.strategy.PersistenceStrategy;
  * The {@link PersistenceServiceConfigurationDTOMapper} is a utility class to map persistence configurations for storage
  *
  * @author Jan N. Klug - Initial contribution
+ * @author Mark Herwege - Implement aliases
+ * @author Mark Herwege - Make default strategy to be only a configuration suggestion
  */
 @NonNullByDefault
 public class PersistenceServiceConfigurationDTOMapper {
@@ -58,8 +62,7 @@ public class PersistenceServiceConfigurationDTOMapper {
         dto.serviceId = persistenceServiceConfiguration.getUID();
         dto.configs = persistenceServiceConfiguration.getConfigs().stream()
                 .map(PersistenceServiceConfigurationDTOMapper::mapPersistenceItemConfig).toList();
-        dto.defaults = persistenceServiceConfiguration.getDefaults().stream().map(PersistenceStrategy::getName)
-                .toList();
+        dto.aliases = Map.copyOf(persistenceServiceConfiguration.getAliases());
         dto.cronStrategies = filterList(persistenceServiceConfiguration.getStrategies(), PersistenceCronStrategy.class,
                 PersistenceServiceConfigurationDTOMapper::mapPersistenceCronStrategy);
         dto.thresholdFilters = filterList(persistenceServiceConfiguration.getFilters(),
@@ -88,9 +91,6 @@ public class PersistenceServiceConfigurationDTOMapper {
                         .map(f -> new PersistenceIncludeFilter(f.name, f.lower, f.upper, f.unit, f.inverted)))
                 .flatMap(Function.identity()).collect(Collectors.toMap(PersistenceFilter::getName, e -> e));
 
-        List<PersistenceStrategy> defaults = dto.defaults.stream()
-                .map(str -> stringToPersistenceStrategy(str, strategyMap, dto.serviceId)).toList();
-
         List<PersistenceItemConfiguration> configs = dto.configs.stream().map(config -> {
             List<PersistenceConfig> items = config.items.stream()
                     .map(PersistenceServiceConfigurationDTOMapper::stringToPersistenceConfig).toList();
@@ -98,10 +98,12 @@ public class PersistenceServiceConfigurationDTOMapper {
                     .map(str -> stringToPersistenceStrategy(str, strategyMap, dto.serviceId)).toList();
             List<PersistenceFilter> filters = config.filters.stream()
                     .map(str -> stringToPersistenceFilter(str, filterMap, dto.serviceId)).toList();
-            return new PersistenceItemConfiguration(items, config.alias, strategies, filters);
+            return new PersistenceItemConfiguration(items, strategies, filters);
         }).toList();
 
-        return new PersistenceServiceConfiguration(dto.serviceId, configs, defaults, strategyMap.values(),
+        Map<String, String> aliases = Map.copyOf(dto.aliases);
+
+        return new PersistenceServiceConfiguration(dto.serviceId, configs, aliases, strategyMap.values(),
                 filterMap.values());
     }
 
@@ -113,8 +115,14 @@ public class PersistenceServiceConfigurationDTOMapper {
         if ("*".equals(string)) {
             return new PersistenceAllConfig();
         } else if (string.endsWith("*")) {
+            if (string.startsWith("!")) {
+                return new PersistenceGroupExcludeConfig(string.substring(1, string.length() - 1));
+            }
             return new PersistenceGroupConfig(string.substring(0, string.length() - 1));
         } else {
+            if (string.startsWith("!")) {
+                return new PersistenceItemExcludeConfig(string.substring(1));
+            }
             return new PersistenceItemConfig(string);
         }
     }
@@ -142,13 +150,17 @@ public class PersistenceServiceConfigurationDTOMapper {
         throw new IllegalArgumentException("Filter '" + string + "' unknown for service '" + serviceId + "'");
     }
 
-    private static String persistenceConfigToString(PersistenceConfig config) {
+    public static String persistenceConfigToString(PersistenceConfig config) {
         if (config instanceof PersistenceAllConfig) {
             return "*";
         } else if (config instanceof PersistenceGroupConfig persistenceGroupConfig) {
             return persistenceGroupConfig.getGroup() + "*";
         } else if (config instanceof PersistenceItemConfig persistenceItemConfig) {
             return persistenceItemConfig.getItem();
+        } else if (config instanceof PersistenceGroupExcludeConfig persistenceGroupExcludeConfig) {
+            return "!" + persistenceGroupExcludeConfig.getGroup() + "*";
+        } else if (config instanceof PersistenceItemExcludeConfig persistenceItemExcludeConfig) {
+            return "!" + persistenceItemExcludeConfig.getItem();
         }
         throw new IllegalArgumentException("Unknown persistence config class " + config.getClass());
     }
@@ -159,7 +171,6 @@ public class PersistenceServiceConfigurationDTOMapper {
                 .toList();
         itemDto.strategies = config.strategies().stream().map(PersistenceStrategy::getName).toList();
         itemDto.filters = config.filters().stream().map(PersistenceFilter::getName).toList();
-        itemDto.alias = config.alias();
         return itemDto;
     }
 

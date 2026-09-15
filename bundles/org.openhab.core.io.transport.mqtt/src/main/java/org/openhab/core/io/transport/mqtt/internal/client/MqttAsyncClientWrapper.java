@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -29,6 +29,7 @@ import com.hivemq.client.mqtt.datatypes.MqttQos;
  * The {@link MqttAsyncClientWrapper} is the base class for async client wrappers
  *
  * @author Jan N. Klug - Initial contribution
+ * @author Mark Herwege - Added parameter for cleanSession/cleanStart
  */
 
 @NonNullByDefault
@@ -40,10 +41,11 @@ public abstract class MqttAsyncClientWrapper implements HostnameVerifier {
      * @param keepAliveInterval keep-alive interval in ms
      * @param username username (optional)
      * @param password password (optional)
+     * @param cleanSessionStart cleanSession (MQTT3) or cleanStart (MQTT5)
      * @return a CompletableFuture (exceptionally on fail)
      */
     public abstract CompletableFuture<?> connect(@Nullable MqttWillAndTestament lwt, int keepAliveInterval,
-            @Nullable String username, @Nullable String password);
+            @Nullable String username, @Nullable String password, @Nullable Boolean cleanSessionStart);
 
     /**
      * disconnect this client

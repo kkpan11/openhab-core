@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,6 +14,7 @@ package org.openhab.core.persistence.registry;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.common.registry.Identifiable;
@@ -25,21 +26,23 @@ import org.openhab.core.persistence.strategy.PersistenceStrategy;
  * The {@link PersistenceServiceConfiguration} represents the configuration for a persistence service.
  *
  * @author Jan N. Klug - Initial contribution
+ * @author Mark Herwege - Implement aliases
+ * @author Mark Herwege - Make default strategy to be only a configuration suggestion
  */
 @NonNullByDefault
 public class PersistenceServiceConfiguration implements Identifiable<String> {
     private final String serviceId;
     private final List<PersistenceItemConfiguration> configs;
-    private final List<PersistenceStrategy> defaults;
+    private final Map<String, String> aliases;
     private final List<PersistenceStrategy> strategies;
     private final List<PersistenceFilter> filters;
 
     public PersistenceServiceConfiguration(String serviceId, Collection<PersistenceItemConfiguration> configs,
-            Collection<PersistenceStrategy> defaults, Collection<PersistenceStrategy> strategies,
+            Map<String, String> aliases, Collection<PersistenceStrategy> strategies,
             Collection<PersistenceFilter> filters) {
         this.serviceId = serviceId;
         this.configs = List.copyOf(configs);
-        this.defaults = List.copyOf(defaults);
+        this.aliases = Map.copyOf(aliases);
         this.strategies = List.copyOf(strategies);
         this.filters = List.copyOf(filters);
     }
@@ -59,12 +62,12 @@ public class PersistenceServiceConfiguration implements Identifiable<String> {
     }
 
     /**
-     * Get the default strategies.
+     * Get the item aliases.
      *
-     * @return an unmodifiable list of the default strategies
+     * @return a map of items to aliases
      */
-    public List<PersistenceStrategy> getDefaults() {
-        return defaults;
+    public Map<String, String> getAliases() {
+        return aliases;
     }
 
     /**

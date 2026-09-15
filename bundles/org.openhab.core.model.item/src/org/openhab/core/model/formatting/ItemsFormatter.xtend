@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,18 +25,20 @@ class ItemsFormatter extends AbstractDeclarativeFormatter {
 	@Inject extension ItemsGrammarAccess
 
 	override protected void configureFormatting(FormattingConfig c) {
-		c.setLinewrap(1, 1, 2).before(modelGroupItemRule)
-		c.setLinewrap(1, 1, 2).before(modelItemTypeRule)
+		c.setLinewrap(1, 1, 2).before(modelItemRule)
+
+		// No space between the item type and the opening parenthesis for the group function arguments
+		c.setNoSpace().between(modelItemTypeRule, modelItemAccess.leftParenthesisKeyword_1_0)
 
 		c.setNoSpace().withinKeywordPairs("<", ">")
 		c.setNoSpace().withinKeywordPairs("(", ")")
+		c.setNoSpace().withinKeywordPairs("[", "]")
 
-		c.setIndentationIncrement.after(modelItemTypeRule)
-		c.setIndentationDecrement.before(modelItemTypeRule)
-		c.setIndentationIncrement.after(modelGroupItemRule)
-		c.setIndentationDecrement.before(modelGroupItemRule)
+		c.setNoSpace().around(":", "=")
+		c.setNoSpace().before(",")
 
-		c.autoLinewrap = 160
+		c.autoLinewrap = 400
+
 		c.setLinewrap(0, 1, 2).before(SL_COMMENTRule)
 		c.setLinewrap(0, 1, 2).before(ML_COMMENTRule)
 		c.setLinewrap(0, 1, 1).after(ML_COMMENTRule)
@@ -46,6 +48,18 @@ class ItemsFormatter extends AbstractDeclarativeFormatter {
 		for (pair : findKeywordPairs(leftKW, rightKW)) {
 			locator.after(pair.first)
 			locator.before(pair.second)
+		}
+	}
+
+	def around(FormattingConfig.ElementLocator locator, String ... listKW) {
+		for (keyword : findKeywords(listKW)) {
+			locator.around(keyword)
+		}
+	}
+
+	def before(FormattingConfig.ElementLocator locator, String ... listKW) {
+		for (keyword : findKeywords(listKW)) {
+			locator.before(keyword)
 		}
 	}
 }

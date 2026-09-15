@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -69,7 +69,7 @@ public class MqttBrokerConnectionEx extends MqttBrokerConnection {
                 return CompletableFuture.completedFuture(null);
             }
             return new CompletableFuture<Boolean>();
-        }).when(mockedClient).connect(any(), anyInt(), any(), any());
+        }).when(mockedClient).connect(any(), anyInt(), any(), any(), any());
         doAnswer(i -> {
             if (disconnectSuccess) {
                 connectionCallback.onDisconnected(new Throwable("disconnect"));

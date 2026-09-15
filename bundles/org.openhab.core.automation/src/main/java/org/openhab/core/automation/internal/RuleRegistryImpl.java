@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -20,18 +20,21 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.automation.Action;
+import org.openhab.core.automation.Condition;
 import org.openhab.core.automation.ManagedRuleProvider;
 import org.openhab.core.automation.Module;
 import org.openhab.core.automation.Rule;
+import org.openhab.core.automation.Rule.TemplateState;
 import org.openhab.core.automation.RuleProvider;
 import org.openhab.core.automation.RuleRegistry;
 import org.openhab.core.automation.RuleStatus;
 import org.openhab.core.automation.RuleStatusInfo;
+import org.openhab.core.automation.Trigger;
 import org.openhab.core.automation.internal.template.RuleTemplateRegistry;
 import org.openhab.core.automation.template.RuleTemplate;
 import org.openhab.core.automation.template.TemplateRegistry;
@@ -39,6 +42,7 @@ import org.openhab.core.automation.type.ModuleTypeRegistry;
 import org.openhab.core.automation.util.ConfigurationNormalizer;
 import org.openhab.core.automation.util.ReferenceResolver;
 import org.openhab.core.automation.util.RuleBuilder;
+import org.openhab.core.automation.util.RuleUtil;
 import org.openhab.core.common.registry.AbstractRegistry;
 import org.openhab.core.common.registry.Provider;
 import org.openhab.core.common.registry.RegistryChangeListener;
@@ -101,6 +105,7 @@ import org.slf4j.LoggerFactory;
  * @author Kai Kreuzer - refactored (managed) provider and registry implementation and other fixes
  * @author Benedikt Niehues - added events for rules
  * @author Victor Toni - return only copies of {@link Rule}s
+ * @author Ravi Nadahar - added support for regenerating {@link Rule}s from {@link RuleTemplate}s.
  */
 @NonNullByDefault
 @Component(service = RuleRegistry.class, immediate = true)
@@ -108,16 +113,13 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
         implements RuleRegistry, RegistryChangeListener<RuleTemplate> {
 
     private static final String SOURCE = RuleRegistryImpl.class.getSimpleName();
+    private static final Set<TemplateState> PROCESSABLE_TEMPLATE_STATES = Set.of(TemplateState.PENDING,
+            TemplateState.TEMPLATE_MISSING);
 
     private final Logger logger = LoggerFactory.getLogger(RuleRegistryImpl.class.getName());
 
     private @NonNullByDefault({}) ModuleTypeRegistry moduleTypeRegistry;
     private @NonNullByDefault({}) RuleTemplateRegistry templateRegistry;
-
-    /**
-     * {@link Map} of template UIDs to rules where these templates participated.
-     */
-    private final Map<String, Set<String>> mapTemplateToRules = new HashMap<>();
 
     /**
      * Constructor that is responsible to invoke the super constructor with appropriate providerClazz
@@ -233,7 +235,8 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
      *             nor
      *             in the module's module type definition.
      * @throws IllegalArgumentException
-     *             when a module id contains dot or when the rule with the same UID already exists.
+     *             If a module id contains a dot, if the rule UID is invalid, or if a rule with the
+     *             same UID already exists.
      */
     @Override
     public Rule add(Rule rule) {
@@ -291,15 +294,6 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
     }
 
     @Override
-    protected void onRemoveElement(Rule rule) {
-        String uid = rule.getUID();
-        String templateUID = rule.getTemplateUID();
-        if (templateUID != null) {
-            updateRuleTemplateMapping(templateUID, uid, true);
-        }
-    }
-
-    @Override
     protected void notifyListenersAboutRemovedElement(Rule element) {
         super.notifyListenersAboutRemovedElement(element);
         postRuleRemovedEvent(element);
@@ -336,54 +330,77 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
         return result;
     }
 
+    @Override
+    public void regenerateFromTemplate(String ruleUID) {
+        Rule rule = get(ruleUID);
+        if (rule == null) {
+            throw new IllegalArgumentException(
+                    "Can't regenerate rule from template because no rule with UID \"" + ruleUID + "\" exists");
+        }
+        if (rule.getTemplateUID() == null || rule.getTemplateState() == TemplateState.NO_TEMPLATE) {
+            throw new IllegalArgumentException(
+                    "Can't regenerate rule from template because the rule isn't linked to a template");
+        }
+        try {
+            Rule resolvedRule = resolveRuleByTemplate(
+                    RuleBuilder.create(rule).withActions((List<Action>) null).withConditions((List<Condition>) null)
+                            .withTriggers((List<Trigger>) null).withTemplateState(TemplateState.PENDING).build());
+            Provider<Rule> provider = getProvider(rule.getUID());
+            if (provider == null) {
+                logger.error("Regenerating rule '{}' from template failed because the provider is unknown",
+                        rule.getUID());
+                return;
+            }
+            if (provider instanceof ManagedRuleProvider) {
+                update(resolvedRule);
+            } else {
+                updated(provider, rule, resolvedRule);
+            }
+            if (resolvedRule.getTemplateState() == TemplateState.TEMPLATE_MISSING) {
+                logger.warn("Failed to regenerate rule '{}' from template since the template is missing",
+                        rule.getUID());
+            } else {
+                logger.info("Rule '{}' was regenerated from template '{}'", rule.getUID(), rule.getTemplateUID());
+            }
+        } catch (IllegalArgumentException e) {
+            logger.error("Regenerating rule '{}' from template failed: {}", rule.getUID(), e.getMessage(), e);
+            throw e;
+        }
+    }
+
     /**
-     * The method checks if the rule has to be resolved by template or not. If the rule does not contain tempateUID it
-     * returns same rule, otherwise it tries to resolve the rule created from template. If the template is available
-     * the method creates a new rule based on triggers, conditions and actions from template. If the template is not
-     * available returns the same rule.
+     * The method checks if the rule has to be resolved by template or not. If the rule does not contain a
+     * {@code templateUID} or the {@code templateState} is {@code NO_TEMPLATE} or {@code INSTANTIATED}, it returns the
+     * same rule, otherwise it tries to resolve the rule created from template. If the template is available the method
+     * creates a new rule based on triggers, conditions and actions from template. If the template is not available, it
+     * returns the same rule.
      *
      * @param rule a rule defined by template.
-     * @return the resolved rule(containing modules defined by the template) or not resolved rule, if the template is
+     * @return the resolved rule (containing modules defined by the template) or not resolved rule, if the template is
      *         missing.
      */
     private Rule resolveRuleByTemplate(Rule rule) {
+        TemplateState templateState = rule.getTemplateState();
+        if (templateState == TemplateState.NO_TEMPLATE || templateState == TemplateState.INSTANTIATED) {
+            return rule;
+        }
         String templateUID = rule.getTemplateUID();
         if (templateUID == null) {
             return rule;
         }
         RuleTemplate template = templateRegistry.get(templateUID);
-        String uid = rule.getUID();
         if (template == null) {
-            updateRuleTemplateMapping(templateUID, uid, false);
+            if (templateState == TemplateState.TEMPLATE_MISSING) {
+                return rule;
+            }
             logger.debug("Rule template {} does not exist.", templateUID);
-            return rule;
+            return RuleBuilder.create(rule).withTemplateState(TemplateState.TEMPLATE_MISSING).build();
         } else {
             RuleImpl resolvedRule = (RuleImpl) RuleBuilder
                     .create(template, rule.getUID(), rule.getName(), rule.getConfiguration(), rule.getVisibility())
                     .build();
             resolveConfigurations(resolvedRule);
-            updateRuleTemplateMapping(templateUID, uid, true);
             return resolvedRule;
-        }
-    }
-
-    /**
-     * Updates the content of the {@link Map} that maps the template to rules, using it to complete their definitions.
-     *
-     * @param templateUID the {@link RuleTemplate}'s UID specifying the template.
-     * @param ruleUID the {@link Rule}'s UID specifying a rule created by the specified template.
-     * @param resolved specifies if the {@link Map} should be updated by adding or removing the specified rule
-     *            accordingly if the rule is resolved or not.
-     */
-    private void updateRuleTemplateMapping(String templateUID, String ruleUID, boolean resolved) {
-        synchronized (this) {
-            Set<String> ruleUIDs = Objects
-                    .requireNonNull(mapTemplateToRules.computeIfAbsent(templateUID, k -> new HashSet<>()));
-            if (resolved) {
-                ruleUIDs.remove(ruleUID);
-            } else {
-                ruleUIDs.add(ruleUID);
-            }
         }
     }
 
@@ -444,21 +461,20 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
 
     @Override
     protected void onAddElement(Rule element) throws IllegalArgumentException {
-        String uid = element.getUID();
+        RuleUtil.assertValidRuleUID(element.getUID());
         try {
             resolveConfigurations(element);
         } catch (IllegalArgumentException e) {
-            logger.debug("Added rule '{}' is invalid", uid, e);
+            logger.debug("Added rule '{}' is invalid", element.getUID(), e);
         }
     }
 
     @Override
     protected void onUpdateElement(Rule oldElement, Rule element) throws IllegalArgumentException {
-        String uid = element.getUID();
         try {
             resolveConfigurations(element);
         } catch (IllegalArgumentException e) {
-            logger.debug("The new version of updated rule '{}' is invalid", uid, e);
+            logger.debug("The new version of updated rule '{}' is invalid", element.getUID(), e);
         }
     }
 
@@ -467,21 +483,24 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
      *
      * @param rule the {@link Rule}, whose configuration values and module configuration values should be resolved and
      *            normalized.
+     * @throws IllegalArgumentException If the configuration is incorrect.
      */
-    private void resolveConfigurations(Rule rule) {
+    private void resolveConfigurations(Rule rule) throws IllegalArgumentException {
         List<ConfigDescriptionParameter> configDescriptions = rule.getConfigurationDescriptions();
         Configuration configuration = rule.getConfiguration();
         ConfigurationNormalizer.normalizeConfiguration(configuration,
                 ConfigurationNormalizer.getConfigDescriptionMap(configDescriptions));
         Map<String, Object> configurationProperties = configuration.getProperties();
-        if (rule.getTemplateUID() == null) {
+        TemplateState templateState = rule.getTemplateState();
+        if (templateState == TemplateState.INSTANTIATED || templateState == TemplateState.NO_TEMPLATE) {
             String uid = rule.getUID();
             try {
-                validateConfiguration(configDescriptions, new HashMap<>(configurationProperties));
+                validateConfiguration(configDescriptions, configurationProperties);
                 resolveModuleConfigReferences(rule.getModules(), configurationProperties);
                 ConfigurationNormalizer.normalizeModuleConfigurations(rule.getModules(), moduleTypeRegistry);
             } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException(String.format("The rule '%s' has incorrect configurations", uid), e);
+                throw new IllegalArgumentException(
+                        String.format("The rule '%s' has incorrect configuration: %s", uid, e.getMessage()), e);
             }
         }
     }
@@ -489,11 +508,14 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
     /**
      * This method serves to validate the {@link Rule}s configuration values.
      *
-     * @param rule the {@link Rule}, whose configuration values should be validated.
+     * @param configDescriptions the configuration parameter descriptions used to validate the configuration.
+     * @param configuration the configuration whose properties to validate.
+     * @throws IllegalArgumentException If a required configuration property is missing.
      */
     private void validateConfiguration(List<ConfigDescriptionParameter> configDescriptions,
-            Map<String, Object> configurations) {
-        if (configurations == null || configurations.isEmpty()) {
+            Map<String, Object> configuration) throws IllegalArgumentException {
+        Map<String, Object> config = configuration == null ? new HashMap<>() : new HashMap<>(configuration);
+        if (config.isEmpty()) {
             if (isOptionalConfig(configDescriptions)) {
                 return;
             } else {
@@ -511,15 +533,7 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
         } else {
             for (ConfigDescriptionParameter configParameter : configDescriptions) {
                 String configParameterName = configParameter.getName();
-                processValue(configurations.remove(configParameterName), configParameter);
-            }
-            if (!configurations.isEmpty()) {
-                StringBuilder statusDescription = new StringBuilder();
-                String msg = " '%s';";
-                for (String name : configurations.keySet()) {
-                    statusDescription.append(String.format(msg, name));
-                }
-                throw new IllegalArgumentException("Extra configuration properties: " + statusDescription.toString());
+                processValue(config.remove(configParameterName), configParameter);
             }
         }
     }
@@ -582,18 +596,13 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
      * @return <code>true</code> if the type and value matching or <code>false</code> in the opposite.
      */
     private boolean checkType(Type type, Object configValue) {
-        switch (type) {
-            case TEXT:
-                return configValue instanceof String;
-            case BOOLEAN:
-                return configValue instanceof Boolean;
-            case INTEGER:
-                return configValue instanceof BigDecimal || configValue instanceof Integer
-                        || configValue instanceof Double doubleValue && doubleValue.intValue() == doubleValue;
-            case DECIMAL:
-                return configValue instanceof BigDecimal || configValue instanceof Double;
-        }
-        return false;
+        return switch (type) {
+            case TEXT -> configValue instanceof String;
+            case BOOLEAN -> configValue instanceof Boolean;
+            case INTEGER -> configValue instanceof BigDecimal || configValue instanceof Integer
+                    || configValue instanceof Double doubleValue && doubleValue.intValue() == doubleValue;
+            case DECIMAL -> configValue instanceof BigDecimal || configValue instanceof Double;
+        };
     }
 
     /**
@@ -622,38 +631,7 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
 
     @Override
     public void added(RuleTemplate element) {
-        String templateUID = element.getUID();
-        Set<String> rules = new HashSet<>();
-        synchronized (this) {
-            Set<String> rulesForResolving = mapTemplateToRules.get(templateUID);
-            if (rulesForResolving != null) {
-                rules.addAll(rulesForResolving);
-            }
-        }
-        for (String rUID : rules) {
-            try {
-                Rule unresolvedRule = get(rUID);
-                if (unresolvedRule != null) {
-                    Rule resolvedRule = resolveRuleByTemplate(unresolvedRule);
-                    Provider<Rule> provider = getProvider(rUID);
-                    if (provider instanceof ManagedRuleProvider) {
-                        update(resolvedRule);
-                    } else if (provider != null) {
-                        updated(provider, unresolvedRule, unresolvedRule);
-                    } else {
-                        logger.error(
-                                "Resolving the rule '{}' by template '{}' failed because the provider is not known",
-                                rUID, templateUID);
-                    }
-                } else {
-                    logger.error(
-                            "Resolving the rule '{}' by template '{}' failed because it is not known to the registry",
-                            rUID, templateUID);
-                }
-            } catch (IllegalArgumentException e) {
-                logger.error("Resolving the rule '{}' by template '{}' failed", rUID, templateUID, e);
-            }
-        }
+        processRuleStubs(element);
     }
 
     @Override
@@ -663,6 +641,34 @@ public class RuleRegistryImpl extends AbstractRegistry<Rule, String, RuleProvide
 
     @Override
     public void updated(RuleTemplate oldElement, RuleTemplate element) {
-        // Do nothing - resolved rules are independent from templates
+        processRuleStubs(element);
+    }
+
+    /**
+     * Processes any existing rule stubs (rules with a template specified that haven't yet been converted into "proper
+     * rules") that references the specified rule template using the new or updated rule template.
+     *
+     * @param template the {@link RuleTemplate} to use for processing matching rule stubs.
+     */
+    protected void processRuleStubs(RuleTemplate template) {
+        String templateUID = template.getUID();
+        List<Rule> rules = stream().filter((r) -> PROCESSABLE_TEMPLATE_STATES.contains(r.getTemplateState())).toList();
+        for (Rule unresolvedRule : rules) {
+            try {
+                Rule resolvedRule = resolveRuleByTemplate(unresolvedRule);
+                Provider<Rule> provider = getProvider(unresolvedRule.getUID());
+                if (provider instanceof ManagedRuleProvider) {
+                    update(resolvedRule);
+                } else if (provider != null) {
+                    updated(provider, unresolvedRule, resolvedRule);
+                } else {
+                    logger.error("Resolving the rule '{}' by template '{}' failed because the provider is not known",
+                            unresolvedRule.getUID(), templateUID);
+                }
+            } catch (IllegalArgumentException e) {
+                logger.error("Resolving the rule '{}' by template '{}' failed", unresolvedRule.getUID(), templateUID,
+                        e);
+            }
+        }
     }
 }

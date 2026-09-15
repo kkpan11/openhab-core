@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -26,8 +26,8 @@ import org.openhab.core.config.core.ConfigDescriptionBuilder;
 import org.openhab.core.config.core.ConfigDescriptionParameter;
 import org.openhab.core.config.core.ConfigDescriptionParameter.Type;
 import org.openhab.core.config.core.ConfigDescriptionParameterBuilder;
-import org.openhab.core.config.core.dto.ConfigDescriptionDTO;
 import org.openhab.core.config.core.dto.ConfigDescriptionParameterDTO;
+import org.openhab.core.io.rest.core.config.dto.EnrichedConfigDescriptionDTO;
 
 /**
  * @author Christoph Weitkamp - Initial contribution
@@ -46,10 +46,10 @@ public class EnrichedConfigDescriptionDTOMapperTest {
         ConfigDescription configDescription = ConfigDescriptionBuilder.create(CONFIG_URI)
                 .withParameter(configDescriptionParameter).build();
 
-        ConfigDescriptionDTO cddto = EnrichedConfigDescriptionDTOMapper.map(configDescription);
+        EnrichedConfigDescriptionDTO cddto = EnrichedConfigDescriptionDTOMapper.map(configDescription);
         assertThat(cddto.parameters, hasSize(1));
 
-        ConfigDescriptionParameterDTO cdpdto = cddto.parameters.get(0);
+        ConfigDescriptionParameterDTO cdpdto = cddto.parameters.getFirst();
         assertThat(cdpdto, instanceOf(EnrichedConfigDescriptionParameterDTO.class));
         assertThat(cdpdto.defaultValue, is(nullValue()));
         EnrichedConfigDescriptionParameterDTO ecdpdto = (EnrichedConfigDescriptionParameterDTO) cdpdto;
@@ -63,10 +63,10 @@ public class EnrichedConfigDescriptionDTOMapperTest {
         ConfigDescription configDescription = ConfigDescriptionBuilder.create(CONFIG_URI)
                 .withParameter(configDescriptionParameter).build();
 
-        ConfigDescriptionDTO cddto = EnrichedConfigDescriptionDTOMapper.map(configDescription);
+        EnrichedConfigDescriptionDTO cddto = EnrichedConfigDescriptionDTOMapper.map(configDescription);
         assertThat(cddto.parameters, hasSize(1));
 
-        ConfigDescriptionParameterDTO cdpdto = cddto.parameters.get(0);
+        ConfigDescriptionParameterDTO cdpdto = cddto.parameters.getFirst();
         assertThat(cdpdto, instanceOf(EnrichedConfigDescriptionParameterDTO.class));
         assertThat(cdpdto.defaultValue, is(CONFIG_PARAMETER_DEFAULT_VALUE));
         EnrichedConfigDescriptionParameterDTO ecdpdto = (EnrichedConfigDescriptionParameterDTO) cdpdto;
@@ -81,15 +81,36 @@ public class EnrichedConfigDescriptionDTOMapperTest {
         ConfigDescription configDescription = ConfigDescriptionBuilder.create(CONFIG_URI)
                 .withParameter(configDescriptionParameter).build();
 
-        ConfigDescriptionDTO cddto = EnrichedConfigDescriptionDTOMapper.map(configDescription);
+        EnrichedConfigDescriptionDTO cddto = EnrichedConfigDescriptionDTOMapper.map(configDescription);
         assertThat(cddto.parameters, hasSize(1));
 
-        ConfigDescriptionParameterDTO cdpdto = cddto.parameters.get(0);
+        ConfigDescriptionParameterDTO cdpdto = cddto.parameters.getFirst();
         assertThat(cdpdto, instanceOf(EnrichedConfigDescriptionParameterDTO.class));
         assertThat(cdpdto.defaultValue, is(CONFIG_PARAMETER_DEFAULT_VALUE));
         EnrichedConfigDescriptionParameterDTO ecdpdto = (EnrichedConfigDescriptionParameterDTO) cdpdto;
         assertThat(ecdpdto.defaultValues, is(notNullValue()));
         assertThat(ecdpdto.defaultValues, hasSize(3));
         assertThat(ecdpdto.defaultValues, is(equalTo(List.of("first value", "second value", "third value"))));
+    }
+
+    @Test
+    public void testThatDefaultValuesDontSplitEscapedCommas() {
+        final String configParameterDefaultValue = "Me\\, myself\\, and I,You \\\\,";
+        ConfigDescriptionParameter configDescriptionParameter = ConfigDescriptionParameterBuilder
+                .create(CONFIG_PARAMETER_NAME, Type.TEXT).withDefault(configParameterDefaultValue).withMultiple(true)
+                .build();
+        ConfigDescription configDescription = ConfigDescriptionBuilder.create(CONFIG_URI)
+                .withParameter(configDescriptionParameter).build();
+
+        EnrichedConfigDescriptionDTO cddto = EnrichedConfigDescriptionDTOMapper.map(configDescription);
+        assertThat(cddto.parameters, hasSize(1));
+
+        ConfigDescriptionParameterDTO cdpdto = cddto.parameters.getFirst();
+        assertThat(cdpdto, instanceOf(EnrichedConfigDescriptionParameterDTO.class));
+        assertThat(cdpdto.defaultValue, is(configParameterDefaultValue));
+        EnrichedConfigDescriptionParameterDTO ecdpdto = (EnrichedConfigDescriptionParameterDTO) cdpdto;
+        assertThat(ecdpdto.defaultValues, is(notNullValue()));
+        assertThat(ecdpdto.defaultValues, hasSize(2));
+        assertThat(ecdpdto.defaultValues, is(equalTo(List.of("Me, myself, and I", "You \\,"))));
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,7 +16,7 @@ import static java.util.Comparator.comparing;
 
 import java.io.File;
 import java.math.BigDecimal;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -61,16 +61,12 @@ public class MediaActionTypeProvider implements ModuleTypeProvider {
     @SuppressWarnings("unchecked")
     @Override
     public @Nullable ModuleType getModuleType(String uid, @Nullable Locale locale) {
-        switch (uid) {
-            case PlayActionHandler.TYPE_ID:
-                return getPlayActionType(locale);
-            case SayActionHandler.TYPE_ID:
-                return getSayActionType(locale);
-            case SynthesizeActionHandler.TYPE_ID:
-                return getSynthesizeActionType(locale);
-            default:
-                return null;
-        }
+        return switch (uid) {
+            case PlayActionHandler.TYPE_ID -> getPlayActionType(locale);
+            case SayActionHandler.TYPE_ID -> getSayActionType(locale);
+            case SynthesizeActionHandler.TYPE_ID -> getSynthesizeActionType(locale);
+            default -> null;
+        };
     }
 
     @Override
@@ -138,7 +134,7 @@ public class MediaActionTypeProvider implements ModuleTypeProvider {
      */
     private List<ParameterOption> getSoundOptions() {
         List<ParameterOption> options = new ArrayList<>();
-        File soundsDir = Paths.get(OpenHAB.getConfigFolder(), AudioManager.SOUND_DIR).toFile();
+        File soundsDir = Path.of(OpenHAB.getConfigFolder(), AudioManager.SOUND_DIR).toFile();
         if (soundsDir.isDirectory()) {
             for (String fileName : soundsDir.list()) {
                 if (fileName.contains(".") && !fileName.startsWith(".")) {

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,8 +14,10 @@ package org.openhab.core.voice.internal;
 
 import java.io.IOException;
 import java.text.ParseException;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.WeakHashMap;
 import java.util.stream.Stream;
@@ -33,14 +35,19 @@ import org.openhab.core.i18n.TranslationProvider;
 import org.openhab.core.items.ItemUtil;
 import org.openhab.core.items.events.ItemEventFactory;
 import org.openhab.core.library.types.OnOffType;
+import org.openhab.core.voice.BasicDTService;
+import org.openhab.core.voice.DTErrorEvent;
+import org.openhab.core.voice.DTEvent;
+import org.openhab.core.voice.DTException;
+import org.openhab.core.voice.DTService;
+import org.openhab.core.voice.DTServiceHandle;
+import org.openhab.core.voice.DTTriggeredEvent;
 import org.openhab.core.voice.DialogContext;
-import org.openhab.core.voice.KSEdgeService;
 import org.openhab.core.voice.KSErrorEvent;
 import org.openhab.core.voice.KSEvent;
 import org.openhab.core.voice.KSException;
 import org.openhab.core.voice.KSListener;
 import org.openhab.core.voice.KSService;
-import org.openhab.core.voice.KSServiceHandle;
 import org.openhab.core.voice.KSpottedEvent;
 import org.openhab.core.voice.RecognitionStartEvent;
 import org.openhab.core.voice.RecognitionStopEvent;
@@ -54,6 +61,11 @@ import org.openhab.core.voice.TTSException;
 import org.openhab.core.voice.Voice;
 import org.openhab.core.voice.text.HumanLanguageInterpreter;
 import org.openhab.core.voice.text.InterpretationException;
+import org.openhab.core.voice.text.InterpreterContext;
+import org.openhab.core.voice.text.conversation.Conversation;
+import org.openhab.core.voice.text.conversation.ConversationException;
+import org.openhab.core.voice.text.conversation.ConversationRole;
+import org.openhab.core.voice.text.interpreter.llm.LLMTool;
 import org.osgi.framework.Bundle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,7 +110,7 @@ public class DialogProcessor implements KSListener, STTListener {
      */
     private boolean isSTTServerAborting = false;
 
-    private @Nullable KSServiceHandle ksServiceHandle;
+    private @Nullable DTServiceHandle dtServiceHandle;
     private @Nullable STTServiceHandle sttServiceHandle;
 
     private @Nullable AudioStream streamKS;
@@ -113,8 +125,8 @@ public class DialogProcessor implements KSListener, STTListener {
         this.i18nProvider = i18nProvider;
         this.activeDialogGroups = activeDialogGroups;
         this.bundle = bundle;
-        var ks = context.ks();
-        this.ksFormat = ks != null
+        var dt = context.dt();
+        this.ksFormat = dt instanceof KSService ks
                 ? VoiceManagerImpl.getBestMatch(context.source().getSupportedFormats(), ks.getSupportedFormats())
                 : null;
         this.sttFormat = VoiceManagerImpl.getBestMatch(context.source().getSupportedFormats(),
@@ -151,34 +163,42 @@ public class DialogProcessor implements KSListener, STTListener {
      * Starts a persistent dialog
      * 
      * @throws IllegalStateException if keyword spot service is misconfigured
+     * @return {@link DTServiceHandle} or null if dialog fails to start
      */
-    public void start() throws IllegalStateException {
-        KSService ksService = dialogContext.ks();
+    public @Nullable DTServiceHandle start() throws IllegalStateException {
+        DTService dtService = dialogContext.dt();
         String keyword = dialogContext.keyword();
-        if (ksService != null && keyword != null) {
+        if (dtService != null && keyword != null) {
             abortKS();
             closeStreamKS();
-            AudioFormat fmt = ksFormat;
-            if (fmt == null) {
-                logger.warn("No compatible audio format found for ks '{}' and source '{}'", ksService.getId(),
-                        dialogContext.source().getId());
-                return;
-            }
             try {
-                if (ksService instanceof KSEdgeService service) {
-                    service.spot(this);
-                } else {
+                if (dtService instanceof KSService ksService) {
+                    AudioFormat fmt = ksFormat;
+                    if (fmt == null) {
+                        logger.warn("No compatible audio format found for ks '{}' and source '{}'", ksService.getId(),
+                                dialogContext.source().getId());
+                        return null;
+                    }
                     AudioStream stream = dialogContext.source().getInputStream(fmt);
                     streamKS = stream;
-                    ksServiceHandle = ksService.spot(this, stream, dialogContext.locale(), keyword);
+                    dtServiceHandle = ksService.spot(this, stream, dialogContext.locale(), keyword);
+                } else if (dtService instanceof BasicDTService basicDTService) {
+                    dtServiceHandle = basicDTService.registerListener(this);
+                } else {
+                    logger.warn("Voice manager is not able to handle this DTService implementation '{}'",
+                            dtService.getClass().getName());
                 }
                 playStartSound();
+                return dtServiceHandle;
             } catch (AudioException e) {
                 logger.warn("Encountered audio error: {}", e.getMessage());
             } catch (KSException e) {
                 logger.warn("Encountered error calling spot: {}", e.getMessage());
                 closeStreamKS();
+            } catch (DTException e) {
+                logger.warn("Encountered error starting the dialog trigger: {}", e.getMessage());
             }
+            return null;
         } else {
             throw new IllegalStateException("Unable to run persistent dialog ks service is not configured");
         }
@@ -258,10 +278,10 @@ public class DialogProcessor implements KSListener, STTListener {
     }
 
     private void abortKS() {
-        KSServiceHandle handle = ksServiceHandle;
+        DTServiceHandle handle = dtServiceHandle;
         if (handle != null) {
             handle.abort();
-            ksServiceHandle = null;
+            dtServiceHandle = null;
         }
     }
 
@@ -314,20 +334,26 @@ public class DialogProcessor implements KSListener, STTListener {
     }
 
     @Override
-    public void ksEventReceived(KSEvent ksEvent) {
+    public void dtEventReceived(DTEvent dtEvent) {
         isSTTServerAborting = false;
-        if (ksEvent instanceof KSpottedEvent) {
-            logger.debug("KSpottedEvent event received");
+        if (dtEvent instanceof DTTriggeredEvent) {
+            logger.debug("{} event received",
+                    (dtEvent instanceof KSpottedEvent) ? "KSpottedEvent" : "DTTriggeredEvent");
             try {
                 startSimpleDialog();
             } catch (IllegalStateException e) {
                 logger.warn("{}", e.getMessage());
             }
-        } else if (ksEvent instanceof KSErrorEvent kse) {
-            logger.debug("KSErrorEvent event received");
+        } else if (dtEvent instanceof DTErrorEvent dte) {
+            logger.debug("{} event received", dte instanceof KSErrorEvent ? "KSErrorEvent" : "DTErrorEvent");
             String text = i18nProvider.getText(bundle, "error.ks-error", null, dialogContext.locale());
-            say(text == null ? kse.getMessage() : text.replace("{0}", kse.getMessage()));
+            say(text == null ? dte.getMessage() : text.replace("{0}", dte.getMessage()));
         }
+    }
+
+    @Override
+    public void ksEventReceived(KSEvent ksEvent) {
+        dtEventReceived(ksEvent);
     }
 
     @Override
@@ -339,17 +365,31 @@ public class DialogProcessor implements KSListener, STTListener {
                 logger.debug("Text recognized: {}", question);
                 toggleProcessing(false);
                 eventListener.onBeforeDialogInterpretation(dialogContext);
-                String answer = "";
+                Conversation conversation = dialogContext.conversation();
                 String error = null;
-                for (HumanLanguageInterpreter interpreter : dialogContext.hlis()) {
-                    try {
-                        answer = interpreter.interpret(dialogContext.locale(), question, dialogContext);
-                        logger.debug("Interpretation result: {}", answer);
-                        error = null;
-                        break;
-                    } catch (InterpretationException e) {
-                        logger.debug("Interpretation exception: {}", e.getMessage());
-                        error = Objects.requireNonNullElse(e.getMessage(), "Unexpected error");
+                String answer = "";
+                try {
+                    conversation.addMessage(ConversationRole.USER, question);
+                } catch (ConversationException e) {
+                    logger.debug("Unable to add message to conversation: {}", e.getMessage(), e);
+                    error = "Unable to add message to conversation: " + e.getMessage();
+                }
+                if (error == null) {
+                    Collection<LLMTool> tools = dialogContext.llmTools();
+                    InterpreterContext interpreterContext = new InterpreterContext(conversation, tools,
+                            dialogContext.locationItem(),
+                            eventListener.enrichSystemPrompt(dialogContext.systemPrompt(), dialogContext.locale()));
+                    for (HumanLanguageInterpreter interpreter : dialogContext.hlis()) {
+                        try {
+                            answer = interpreter.interpret(dialogContext.locale(), interpreterContext);
+                            error = null;
+                            logger.debug("Interpretation result from interpreter '{}': {}", interpreter.getId(),
+                                    answer);
+                            break;
+                        } catch (InterpretationException e) {
+                            logger.debug("Interpretation exception: {}", e.getMessage());
+                            error = Objects.requireNonNullElse(e.getMessage(), "Unexpected error");
+                        }
                     }
                 }
                 say(error != null ? error : answer);
@@ -493,5 +533,14 @@ public class DialogProcessor implements KSListener, STTListener {
          * @param context used by the dialog processor
          */
         void onDialogStopped(DialogContext context);
+
+        /**
+         * Enriches the system prompt with additional context, e.g., available items.
+         *
+         * @param baseSystemPrompt the base system prompt
+         * @param locale the locale to use for command options localization
+         * @return the system prompt with the additional context
+         */
+        String enrichSystemPrompt(@Nullable String baseSystemPrompt, @Nullable Locale locale);
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -63,8 +63,8 @@ public interface RuleRegistry extends Registry<Rule, String> {
      *
      * @param rule a {@link Rule} instance which have to be added into the {@link RuleRegistry}.
      * @return a copy of the added {@link Rule}
-     * @throws IllegalArgumentException when a rule with the same UID already exists or some of the conditions or
-     *             actions has wrong format of input reference.
+     * @throws IllegalArgumentException if the rule UID is invalid, a rule with the same UID already exists, or some
+     *             of the conditions or actions has an invalid input reference.
      * @throws IllegalStateException when the RuleManagedProvider is unavailable.
      */
     @Override
@@ -85,4 +85,13 @@ public interface RuleRegistry extends Registry<Rule, String> {
      * @return collection of {@link Rule}s having specified tags.
      */
     Collection<Rule> getByTags(String... tags);
+
+    /**
+     * This method triggers a new generation of the rule from its template by reverting the rule to its
+     * "rule stub" state only containing the template configuration.
+     *
+     * @param ruleUID the UID of the {@link Rule}.
+     * @throws IllegalArgumentException if the rule doesn't exist or isn't linked to a template.
+     */
+    void regenerateFromTemplate(String ruleUID);
 }

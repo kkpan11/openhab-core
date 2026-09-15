@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,13 +17,13 @@ import static org.openhab.core.automation.module.script.profile.ScriptProfileFac
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
@@ -38,7 +38,6 @@ import javax.script.ScriptException;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.automation.module.script.profile.ScriptProfile;
-import org.openhab.core.common.ThreadPoolManager;
 import org.openhab.core.common.registry.RegistryChangeListener;
 import org.openhab.core.config.core.ConfigDescription;
 import org.openhab.core.config.core.ConfigDescriptionBuilder;
@@ -63,13 +62,15 @@ import org.slf4j.LoggerFactory;
  * language
  *
  * @author Jan N. Klug - Initial contribution
+ * @author Florian Hotze - Implement script dependency tracking
  */
 @NonNullByDefault
 @Component(factory = "org.openhab.core.automation.module.script.transformation.factory", service = {
-        TransformationService.class, ScriptTransformationService.class, ConfigOptionProvider.class,
-        ConfigDescriptionProvider.class })
-public class ScriptTransformationService implements TransformationService, ConfigOptionProvider,
-        ConfigDescriptionProvider, RegistryChangeListener<Transformation> {
+        TransformationService.class, ScriptTransformationService.class, ScriptDependencyTracker.Listener.class,
+        ConfigOptionProvider.class, ConfigDescriptionProvider.class })
+public class ScriptTransformationService
+        implements TransformationService, ScriptDependencyTracker.Listener, ScriptEngineManager.FactoryChangeListener,
+        ConfigOptionProvider, ConfigDescriptionProvider, RegistryChangeListener<Transformation> {
     public static final String SCRIPT_TYPE_PROPERTY_NAME = "openhab.transform.script.scriptType";
     public static final String OPENHAB_TRANSFORMATION_SCRIPT = "openhab-transformation-script-";
 
@@ -80,9 +81,6 @@ public class ScriptTransformationService implements TransformationService, Confi
     private static final Pattern SCRIPT_CONFIG_PATTERN = Pattern.compile("(?<scriptUid>.+?)(\\?(?<params>.*?))?");
 
     private final Logger logger = LoggerFactory.getLogger(ScriptTransformationService.class);
-
-    private final ScheduledExecutorService scheduler = ThreadPoolManager
-            .getScheduledPool(ThreadPoolManager.THREAD_POOL_NAME_COMMON);
 
     private final String scriptType;
     private final URI profileConfigUri;
@@ -109,10 +107,12 @@ public class ScriptTransformationService implements TransformationService, Confi
         this.scriptType = scriptType;
         this.profileConfigUri = URI.create(PROFILE_CONFIG_URI_PREFIX + scriptType.toUpperCase());
         transformationRegistry.addRegistryChangeListener(this);
+        scriptEngineManager.addFactoryChangeListener(this);
     }
 
     @Deactivate
     public void deactivate() {
+        scriptEngineManager.removeFactoryChangeListener(this);
         transformationRegistry.removeRegistryChangeListener(this);
 
         // cleanup script engines
@@ -139,7 +139,8 @@ public class ScriptTransformationService implements TransformationService, Confi
             params = configMatcher.group("params");
         }
 
-        ScriptRecord scriptRecord = scriptCache.computeIfAbsent(scriptUid, k -> new ScriptRecord());
+        ScriptRecord scriptRecord = Objects
+                .requireNonNull(scriptCache.computeIfAbsent(scriptUid, k -> new ScriptRecord()));
         scriptRecord.lock.lock();
         try {
             if (scriptRecord.script.isBlank()) {
@@ -161,9 +162,6 @@ public class ScriptTransformationService implements TransformationService, Confi
 
             if (!scriptEngineManager.isSupported(scriptType)) {
                 // language has been removed, clear container and compiled scripts if found
-                if (scriptRecord.scriptEngineContainer != null) {
-                    scriptEngineManager.removeEngine(OPENHAB_TRANSFORMATION_SCRIPT + scriptUid);
-                }
                 clearCache(scriptUid);
                 throw new TransformationException(
                         "Script type '" + scriptType + "' is not supported by any available script engine.");
@@ -185,8 +183,10 @@ public class ScriptTransformationService implements TransformationService, Confi
                         : scriptEngineContainer.getScriptEngine();
                 ScriptContext executionContext = engine.getContext();
                 executionContext.setAttribute("input", source, ScriptContext.ENGINE_SCOPE);
+                ArrayList<String> injectedParams = null;
 
                 if (params != null) {
+                    injectedParams = new ArrayList<>();
                     for (String param : params.split("&")) {
                         String[] splitString = param.split("=");
                         if (splitString.length != 2) {
@@ -197,6 +197,7 @@ public class ScriptTransformationService implements TransformationService, Confi
                             param = URLDecoder.decode(splitString[0], StandardCharsets.UTF_8);
                             String value = URLDecoder.decode(splitString[1], StandardCharsets.UTF_8);
                             executionContext.setAttribute(param, value, ScriptContext.ENGINE_SCOPE);
+                            injectedParams.add(param);
                         }
                     }
                 }
@@ -210,8 +211,15 @@ public class ScriptTransformationService implements TransformationService, Confi
                     scriptRecord.compiledScript = compiledScript;
                 }
 
-                Object result = compiledScript != null ? compiledScript.eval() : engine.eval(scriptRecord.script);
-                return result == null ? null : result.toString();
+                try {
+                    Object result = compiledScript != null ? compiledScript.eval() : engine.eval(scriptRecord.script);
+                    return result == null ? null : result.toString();
+                } finally {
+                    if (injectedParams != null) {
+                        injectedParams
+                                .forEach(param -> executionContext.removeAttribute(param, ScriptContext.ENGINE_SCOPE));
+                    }
+                }
             } catch (ScriptException e) {
                 throw new TransformationException("Failed to execute script.", e);
             }
@@ -275,6 +283,16 @@ public class ScriptTransformationService implements TransformationService, Confi
                 .withParameterGroups(template.getParameterGroups()).build();
     }
 
+    @Override
+    public void onDependencyChange(String scriptId) {
+        String scriptUid = scriptId.substring(OPENHAB_TRANSFORMATION_SCRIPT.length());
+        ScriptRecord scriptRecord = scriptCache.get(scriptUid);
+        if (scriptRecord != null) {
+            logger.debug("Clearing script cache for script {}", scriptUid);
+            clearCache(scriptUid);
+        }
+    }
+
     private void clearCache(String uid) {
         ScriptRecord scriptRecord = scriptCache.remove(uid);
         if (scriptRecord != null) {
@@ -283,31 +301,42 @@ public class ScriptTransformationService implements TransformationService, Confi
     }
 
     private void disposeScriptRecord(ScriptRecord scriptRecord) {
-        ScriptEngineContainer scriptEngineContainer = scriptRecord.scriptEngineContainer;
-        if (scriptEngineContainer != null) {
-            disposeScriptEngine(scriptEngineContainer.getScriptEngine());
-        }
-        CompiledScript compiledScript = scriptRecord.compiledScript;
-        if (compiledScript != null) {
-            disposeScriptEngine(compiledScript.getEngine());
+        scriptRecord.lock.lock();
+        try {
+            ScriptEngineContainer scriptEngineContainer = scriptRecord.scriptEngineContainer;
+            if (scriptEngineContainer != null) {
+                try {
+                    scriptEngineManager.removeEngine(scriptEngineContainer.getIdentifier());
+                } catch (Exception e) {
+                    logger.error("Exception occurred while disposing script {}", scriptEngineContainer.getIdentifier(),
+                            e);
+                }
+                scriptRecord.scriptEngineContainer = null;
+            }
+            scriptRecord.compiledScript = null;
+        } finally {
+            scriptRecord.lock.unlock();
         }
     }
 
-    private void disposeScriptEngine(ScriptEngine scriptEngine) {
-        if (scriptEngine instanceof AutoCloseable closableScriptEngine) {
-            // we cannot not use ScheduledExecutorService.execute here as it might execute the task in the calling
-            // thread (calling ScriptEngine.close in the same thread may result in a deadlock if the ScriptEngine
-            // tries to Thread.join)
-            scheduler.schedule(() -> {
-                try {
-                    closableScriptEngine.close();
-                } catch (Exception e) {
-                    logger.error("Error while closing script engine", e);
-                }
-            }, 0, TimeUnit.SECONDS);
-        } else {
-            logger.trace("ScriptEngine does not support AutoCloseable interface");
+    @Override
+    public void factoryAdded(String scriptType) {
+        // we don't need to process this, as the scriptCache is lazy-initialized
+    }
+
+    @Override
+    public void factoryRemoved(String scriptType) {
+        if (!this.scriptType.equals(scriptType)) {
+            return;
         }
+
+        logger.debug(
+                "ScriptEngineFactory for script type '{}' has been removed, disposing script engines of this type.",
+                scriptType);
+        // removal of the ScriptEngineFactory for "our" scriptType causes all ScriptEngines to be closed:
+        // cleanup all script engines so they can be properly recreated when needed and a ScriptEngineFactory for "our"
+        // scriptType is available
+        scriptCache.values().forEach(this::disposeScriptRecord);
     }
 
     private static class ScriptRecord {

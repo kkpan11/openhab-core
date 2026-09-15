@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,6 +18,8 @@ import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.time.Instant;
@@ -132,10 +134,10 @@ public class JsonStorageTest extends JavaTest {
         assertEquals(0, ((BigDecimal) dummy.configuration.get("testInt")).scale());
         assertEquals(0, ((BigDecimal) dummy.configuration.get("testLong")).scale());
         assertEquals(0, ((BigDecimal) dummy.configuration.get("testBigDecimal")).scale());
-        assertEquals(0, ((List<BigDecimal>) dummy.configuration.get("multiInt")).get(0).scale());
+        assertEquals(0, ((List<BigDecimal>) dummy.configuration.get("multiInt")).getFirst().scale());
         assertEquals(0, ((List<BigDecimal>) dummy.configuration.get("multiInt")).get(1).scale());
         assertEquals(0, ((List<BigDecimal>) dummy.configuration.get("multiInt")).get(2).scale());
-        assertEquals(0, ((BigDecimal) dummy.channels.get(0).configuration.get("testChildLong")).scale());
+        assertEquals(0, ((BigDecimal) dummy.channels.getFirst().configuration.get("testChildLong")).scale());
     }
 
     @Test
@@ -154,6 +156,7 @@ public class JsonStorageTest extends JavaTest {
     @SuppressWarnings({ "null", "unchecked" })
     @Test
     public void testOrdering() throws IOException {
+        Gson gson = new GsonBuilder().setDateFormat(DateTimeType.DATE_PATTERN_JSON_COMPAT).create();
         objectStorage.put("DummyObject", new DummyObject());
         {
             objectStorage.put("a", new DummyObject());
@@ -170,15 +173,16 @@ public class JsonStorageTest extends JavaTest {
             persistAndReadAgain();
         }
         String storageStringBA = Files.readString(tmpFile.toPath());
-        assertEquals(storageStringAB, storageStringBA);
+        assertEquals(gson.fromJson(storageStringAB, JsonObject.class),
+                gson.fromJson(storageStringBA, JsonObject.class));
 
         {
             objectStorage = new JsonStorage<>(tmpFile, this.getClass().getClassLoader(), 0, 0, 0, List.of());
             objectStorage.flush();
         }
         String storageStringReserialized = Files.readString(tmpFile.toPath());
-        assertEquals(storageStringAB, storageStringReserialized);
-        Gson gson = new GsonBuilder().setDateFormat(DateTimeType.DATE_PATTERN_JSON_COMPAT).create();
+        assertEquals(gson.fromJson(storageStringAB, JsonObject.class),
+                gson.fromJson(storageStringReserialized, JsonObject.class));
 
         // Parse json. Gson preserves json object key ordering when we parse only JsonObject
         JsonObject orderedMap = gson.fromJson(storageStringAB, JsonObject.class);
@@ -306,8 +310,8 @@ public class JsonStorageTest extends JavaTest {
 
     private static URL newURL(String url) {
         try {
-            return new URL(url);
-        } catch (MalformedURLException e) {
+            return (new URI(url)).toURL();
+        } catch (MalformedURLException | URISyntaxException e) {
             throw new IllegalArgumentException(e);
         }
     }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -107,16 +107,9 @@ public interface ItemRegistry extends Registry<Item, String> {
     Item remove(String itemName, boolean recursive);
 
     /**
-     * Add a hook to be informed before adding/after removing items.
-     *
-     * @param hook
+     * Called when an item instance has been externally updated in order to inform all registry
+     * listeners the change between its old and new state.
      */
-    void addRegistryHook(RegistryHook<Item> hook);
-
-    /**
-     * Remove the hook again.
-     *
-     * @param hook
-     */
-    void removeRegistryHook(RegistryHook<Item> hook);
+    default void notifyListenersAboutItemExternalUpdate(Item oldItem, Item newItem) {
+    }
 }

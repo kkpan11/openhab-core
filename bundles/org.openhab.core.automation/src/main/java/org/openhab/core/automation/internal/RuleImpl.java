@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,6 +15,7 @@ package org.openhab.core.automation.internal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -48,6 +49,7 @@ public class RuleImpl implements Rule {
     protected Configuration configuration;
     protected List<ConfigDescriptionParameter> configDescriptions;
     protected @Nullable String templateUID;
+    protected TemplateState templateState;
     protected String uid;
     protected @Nullable String name;
     protected Set<String> tags;
@@ -62,7 +64,7 @@ public class RuleImpl implements Rule {
      * @param uid the rule's identifier, or {@code null} if a random identifier should be generated.
      */
     public RuleImpl(@Nullable String uid) {
-        this(uid, null, null, null, null, null, null, null, null, null, null);
+        this(uid, null, null, null, null, null, null, null, null, null, TemplateState.NO_TEMPLATE, null);
     }
 
     /**
@@ -85,12 +87,14 @@ public class RuleImpl implements Rule {
      * @param templateUID the {@link RuleTemplate} identifier of the template that will be used by the
      *            {@link RuleRegistry} to validate the {@link Rule}'s configuration, as well as to create and configure
      *            the {@link Rule}'s modules, or null if the {@link Rule} should not be created from a template.
+     * @param templateState the {@link TemplateState} of the {@link Rule}.
      * @param visibility the {@link Rule}'s visibility
      */
     public RuleImpl(@Nullable String uid, final @Nullable String name, final @Nullable String description,
             final @Nullable Set<String> tags, @Nullable List<Trigger> triggers, @Nullable List<Condition> conditions,
             @Nullable List<Action> actions, @Nullable List<ConfigDescriptionParameter> configDescriptions,
-            @Nullable Configuration configuration, @Nullable String templateUID, @Nullable Visibility visibility) {
+            @Nullable Configuration configuration, @Nullable String templateUID, TemplateState templateState,
+            @Nullable Visibility visibility) {
         this.uid = uid == null ? UUID.randomUUID().toString() : uid;
         this.name = name;
         this.description = description;
@@ -102,6 +106,7 @@ public class RuleImpl implements Rule {
         this.configuration = configuration == null ? new Configuration()
                 : new Configuration(configuration.getProperties());
         this.templateUID = templateUID;
+        this.templateState = templateState;
         this.visibility = visibility == null ? Visibility.VISIBLE : visibility;
     }
 
@@ -122,6 +127,20 @@ public class RuleImpl implements Rule {
      */
     public void setTemplateUID(@Nullable String templateUID) {
         this.templateUID = templateUID;
+    }
+
+    @Override
+    public TemplateState getTemplateState() {
+        return templateState;
+    }
+
+    /**
+     * This method is used to specify the current rule template state.
+     *
+     * @param templateState the {@link TemplateState} to set.
+     */
+    public void setTemplateState(TemplateState templateState) {
+        this.templateState = Objects.requireNonNull(templateState);
     }
 
     @Override
